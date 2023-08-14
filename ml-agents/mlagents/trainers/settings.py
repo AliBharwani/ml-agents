@@ -134,6 +134,7 @@ class NetworkSettings:
 
     normalize: bool = False
     hidden_units: int = 128
+    training_window: int = 32
     num_layers: int = 2
     vis_encode_type: EncoderType = EncoderType.SIMPLE
     memory: Optional[MemorySettings] = None
@@ -622,6 +623,11 @@ class TrainerSettings(ExportableSettings):
         return all_trainer_settings[self.trainer_type]()
 
     network_settings: NetworkSettings = attr.ib(factory=NetworkSettings)
+
+    policy_network_settings: NetworkSettings = attr.ib(factory=NetworkSettings)
+
+    world_model_network_settings: NetworkSettings = attr.ib(factory=NetworkSettings)
+
     reward_signals: Dict[RewardSignalType, RewardSignalSettings] = attr.ib(
         factory=lambda: {RewardSignalType.EXTRINSIC: RewardSignalSettings()}
     )
@@ -630,6 +636,7 @@ class TrainerSettings(ExportableSettings):
     checkpoint_interval: int = 500000
     max_steps: int = 500000
     time_horizon: int = 64
+    process_trajectory_on_termination : bool = False
     summary_freq: int = 50000
     threaded: bool = False
     self_play: Optional[SelfPlaySettings] = None

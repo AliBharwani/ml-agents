@@ -35,6 +35,7 @@ class Policy:
         self.use_recurrent = self.network_settings.memory is not None
         self.m_size = 0
         self.sequence_length = 1
+        self.training_window = network_settings.training_window
         if self.use_recurrent:
             self.m_size = self.network_settings.memory.memory_size
             self.sequence_length = self.network_settings.memory.sequence_length
