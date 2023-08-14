@@ -10,7 +10,8 @@ def get_num_threads_to_use() -> Optional[int]:
     By default, PyTorch uses 1/2 of the available cores.
     """
     num_cpus = _get_num_available_cpus()
-    return max(min(num_cpus // 2, 4), 1) if num_cpus is not None else None
+    print(f"CHANGED PYTOCH AVAILABLE CPUS TO HALF OF AVAIABLE: {num_cpus}")
+    return num_cpus
 
 
 def _get_num_available_cpus() -> Optional[int]:
