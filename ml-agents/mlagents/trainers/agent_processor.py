@@ -46,6 +46,7 @@ class AgentProcessor:
         behavior_id: str,
         stats_reporter: StatsReporter,
         max_trajectory_length: int = sys.maxsize,
+        process_trajectory_on_termination: bool = False,
     ):
         """
         Create an AgentProcessor.
@@ -80,6 +81,7 @@ class AgentProcessor:
         self._episode_rewards: Dict[GlobalAgentId, float] = defaultdict(float)
         self._stats_reporter = stats_reporter
         self._max_trajectory_length = max_trajectory_length
+        self._process_trajectory_on_termination = process_trajectory_on_termination
         self._trajectory_queues: List[AgentManagerQueue[Trajectory]] = []
         self._behavior_id = behavior_id
 
@@ -280,11 +282,8 @@ class AgentProcessor:
                 self._episode_steps[global_agent_id] += 1
 
             # Add a trajectory segment to the buffer if terminal or the length has reached the time horizon
-            if (
-                len(self._experience_buffers[global_agent_id])
-                >= self._max_trajectory_length
-                or terminated
-            ):
+            has_reached_trajectory_len = not self._process_trajectory_on_termination and len(self._experience_buffers[global_agent_id]) >= self._max_trajectory_length
+            if (has_reached_trajectory_len or terminated):
                 next_obs = step.obs
                 next_group_obs = []
                 for _id, _obs in self._current_group_obs[global_group_id].items():
@@ -301,6 +300,7 @@ class AgentProcessor:
                 for traj_queue in self._trajectory_queues:
                     traj_queue.put(trajectory)
                 self._experience_buffers[global_agent_id] = []
+                print(f"Agent {global_agent_id} terminated at: {self._episode_steps.get(global_agent_id, 0)} steps")
             if terminated:
                 # Record episode length.
                 self._stats_reporter.add_stat(
@@ -425,8 +425,9 @@ class AgentManager(AgentProcessor):
         stats_reporter: StatsReporter,
         max_trajectory_length: int = sys.maxsize,
         threaded: bool = True,
+        process_trajectory_on_termination: bool = False,
     ):
-        super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length)
+        super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
         trajectory_queue_len = 20 if threaded else 0
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
             self._behavior_id, maxlen=trajectory_queue_len

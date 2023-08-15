@@ -289,7 +289,7 @@ namespace Unity.MLAgents
         /// Note that this value is different for each agent, and may not overlap
         /// with the step counter in the Academy, since agents reset based on
         /// their own experience.
-        int m_StepCount;
+        public int m_StepCount;
 
         /// Number of times the Agent has completed an episode.
         int m_CompletedEpisodes;

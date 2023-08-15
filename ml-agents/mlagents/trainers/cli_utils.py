@@ -260,7 +260,7 @@ def _create_parser() -> argparse.ArgumentParser:
     )
     eng_conf.add_argument(
         "--time-scale",
-        default=20,
+        default=1,
         type=float,
         help="The time scale of the Unity environment(s). Equivalent to setting "
         "Time.timeScale in Unity.",
@@ -276,7 +276,7 @@ def _create_parser() -> argparse.ArgumentParser:
     )
     eng_conf.add_argument(
         "--capture-frame-rate",
-        default=60,
+        default=0,
         type=int,
         help="The capture frame rate of the Unity environment(s). Equivalent to setting "
         "Time.captureFramerate in Unity.",

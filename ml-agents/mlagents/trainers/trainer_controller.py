@@ -146,6 +146,7 @@ class TrainerController:
             trainer.stats_reporter,
             trainer.parameters.time_horizon,
             threaded=trainer.threaded,
+            process_trajectory_on_termination=trainer.parameters.process_trajectory_on_termination,
         )
         env_manager.set_agent_manager(name_behavior_id, agent_manager)
         env_manager.set_policy(name_behavior_id, policy)

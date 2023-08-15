@@ -6,6 +6,12 @@ from collections import defaultdict
 from typing import Dict, cast
 import os
 
+from mlagents.trainers.buffer import BufferKey
+
+from mlagents.trainers.trajectory import ObsUtil
+import attr
+
+
 # from mlagents.trainers.trajectory import Trajectory
 
 from mlagents.trainers.trajectory import Trajectory
@@ -28,6 +34,8 @@ from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
 from mlagents.trainers.trainer.rl_trainer import RLTrainer
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
 from mlagents.trainers.settings import TrainerSettings, OffPolicyHyperparamSettings
+from mlagents.trainers.supertrack.optimizer_torch import TorchSuperTrackOptimizer, SuperTrackSettings
+
 
 logger = get_logger(__name__)
 
@@ -35,22 +43,12 @@ BUFFER_TRUNCATE_PERCENT = 0.8
 
 TRAINER_NAME = "supertrack"
 
-@attr.s(auto_attribs=True)
-class SuperTrackSettings(OffPolicyHyperparamSettings):
-    batch_size: int = 128
-    buffer_size: int = 50000
-    buffer_init_steps: int = 0
-    tau: float = 0.005
-    steps_per_update: float = 1
-    save_replay_buffer: bool = False
-    init_entcoef: float = 1.0
-    
 
 class SuperTrackTrainer(RLTrainer):
     """
     This is an implementation of the SuperTrack world-based RL algorithm
     """
-    def __init(
+    def __init__(
         self,
         behavior_name: str,
         reward_buff_cap: int,
@@ -72,12 +70,11 @@ class SuperTrackTrainer(RLTrainer):
         """
         super().__init__(
             behavior_name,
-            reward_buff_cap,
             trainer_settings,
             training,
             load,
-            seed,
             artifact_path,
+            reward_buff_cap,
         )
 
         self.seed = seed
@@ -193,9 +190,6 @@ class SuperTrackTrainer(RLTrainer):
         self._step = policy.get_current_step()
         # Assume steps were updated at the correct ratio before
         self.update_steps = int(max(1, self._step / self.steps_per_update))
-        self.reward_signal_update_steps = int(
-            max(1, self._step / self.reward_signal_steps_per_update)
-        )
 
 
     @timed
@@ -271,7 +265,7 @@ class SuperTrackTrainer(RLTrainer):
         # Update the normalization
         if self.is_training:
             self.policy.actor.update_normalization(agent_buffer_trajectory)
-            self.optimizer.world_model.update_normalization(agent_buffer_trajectory)
+            # self.optimizer.world_model.update_normalization(agent_buffer_trajectory)
 
         # Bootstrap using the last step rather than the bootstrap step if max step is reached.
         # Set last element to duplicate obs and remove dones.
