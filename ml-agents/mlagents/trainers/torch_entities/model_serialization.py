@@ -3,7 +3,7 @@ import threading
 from mlagents.torch_utils import torch
 
 from mlagents_envs.logging_util import get_logger
-from mlagents.trainers.settings import SerializationSettings
+from mlagents.trainers.settings import NetworkSettings, SerializationSettings
 
 
 logger = get_logger(__name__)
@@ -91,17 +91,24 @@ class ModelSerializer:
         # Any multi-dimentional input should follow that otherwise will
         # cause problem to barracuda import.
         self.policy = policy
+        # MY TODO: Change to Policy Network settings input size
         observation_specs = self.policy.behavior_spec.observation_specs
+        policy_network_settings : NetworkSettings = policy.network_settings
+
         batch_dim = [1]
         seq_len_dim = [1]
         num_obs = len(observation_specs)
 
-        dummy_obs = [
-            torch.zeros(
-                batch_dim + list(ModelSerializer._get_onnx_shape(obs_spec.shape))
-            )
-            for obs_spec in observation_specs
-        ]
+        policy_input_setting = policy_network_settings.input_size
+        if policy_input_setting == -1:
+            dummy_obs = [
+                torch.zeros(
+                    batch_dim + list(ModelSerializer._get_onnx_shape(obs_spec.shape))
+                )
+                for obs_spec in observation_specs
+            ]
+        else:
+            dummy_obs = torch.zeroes(batch_dim + [policy_input_setting])
 
         dummy_masks = torch.ones(
             batch_dim + [sum(self.policy.behavior_spec.action_spec.discrete_branches)]

@@ -34,7 +34,7 @@ from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
 from mlagents.trainers.trainer.rl_trainer import RLTrainer
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
 from mlagents.trainers.settings import TrainerSettings, OffPolicyHyperparamSettings
-from mlagents.trainers.supertrack.optimizer_torch import TorchSuperTrackOptimizer, SuperTrackSettings
+from mlagents.trainers.supertrack.optimizer_torch import SuperTrackPolicyNetwork, TorchSuperTrackOptimizer, SuperTrackSettings
 
 
 logger = get_logger(__name__)
@@ -295,7 +295,7 @@ class SuperTrackTrainer(RLTrainer):
         :param behavior_spec: specifications for policy construction
         :return policy
         """
-        actor_cls = SimpleActor
+        actor_cls = SuperTrackPolicyNetwork
         actor_kwargs = {"conditional_sigma": True, "tanh_squash": True}
 
         policy = TorchPolicy(

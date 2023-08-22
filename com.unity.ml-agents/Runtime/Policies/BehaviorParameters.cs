@@ -177,7 +177,6 @@ namespace Unity.MLAgents.Policies
             set { m_UseChildSensors = value; }
         }
 
-        [HideInInspector]
         [SerializeField]
         [Tooltip("Set action selection to deterministic, Only applies to inference from within unity.")]
         private bool m_DeterministicInference = false;

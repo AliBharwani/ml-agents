@@ -35,6 +35,9 @@ def behavior_spec_from_proto(
     """
     observation_specs = []
     for obs in agent_info.observations:
+        # print(obs.name, " || " , obs.shape)  # VectorSensor_size100  ||  [100]
+        # print(obs.dimension_properties) # [1]
+        # print (DimensionProperty(dim) for dim in obs.dimension_properties)  # <generator object behavior_spec_from_proto.<locals>.<genexpr> at 0x00000222D62265F0>
         observation_specs.append(
             ObservationSpec(
                 name=obs.name,
@@ -47,6 +50,7 @@ def behavior_spec_from_proto(
                 else (DimensionProperty.UNSPECIFIED,) * len(obs.shape),
             )
         )
+
 
     # proto from communicator < v1.3 does not set action spec, use deprecated fields instead
     if (
