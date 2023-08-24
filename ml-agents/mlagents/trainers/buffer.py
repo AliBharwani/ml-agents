@@ -38,6 +38,10 @@ class BufferKey(enum.Enum):
     BASELINE_MEMORY = "poca_baseline_memory"
     PREV_ACTION = "prev_action"
 
+    IDX_IN_TRAJ = "idx_in_traj"
+    TRAJ_LEN = "traj_len"
+    SUPERTRACK_DATA = "supertrack_data"
+
     ADVANTAGES = "advantages"
     DISCOUNTED_RETURNS = "discounted_returns"
 
@@ -48,6 +52,8 @@ class BufferKey(enum.Enum):
     GROUP_DISCRETE_ACTION = "group_discrete_aaction"
     GROUP_NEXT_CONT_ACTION = "group_next_cont_action"
     GROUP_NEXT_DISC_ACTION = "group_next_disc_action"
+
+
 
 
 class ObservationKeyPrefix(enum.Enum):
@@ -97,6 +103,7 @@ class RewardSignalUtil:
 class AgentBufferField(list):
     """
     AgentBufferField is a list of numpy arrays, or List[np.ndarray] for group entries.
+       OR a list of single values, for BufferKey.DONE and BufferKey.TRAJ_LEN
     When an agent collects a field, you can add it to its AgentBufferField with the append method.
     """
 

@@ -7,6 +7,7 @@ from typing import Dict, cast
 import os
 
 from mlagents.trainers.buffer import BufferKey
+from mlagents.trainers.supertrack.supertrack_utils import add_supertrack_data_field
 
 from mlagents.trainers.trajectory import ObsUtil
 import attr
@@ -231,11 +232,6 @@ class SuperTrackTrainer(RLTrainer):
                     self._stats_reporter.add_stat(stat, np.mean(stat_list))
                 has_updated = True
 
-            if self.optimizer.bc_module:
-                update_stats = self.optimizer.bc_module.update()
-                for stat, val in update_stats.items():
-                    self._stats_reporter.add_stat(stat, val)
-
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
         if self.update_buffer.num_experiences > self.hyperparameters.buffer_size:
@@ -244,9 +240,6 @@ class SuperTrackTrainer(RLTrainer):
             )
         return has_updated
 
-
-
-
 ### FROM SAC TRAINER LEVEL
 
     def _process_trajectory(self, trajectory: Trajectory) -> None:
@@ -254,26 +247,16 @@ class SuperTrackTrainer(RLTrainer):
         Takes a trajectory and processes it, putting it into the replay buffer.
         """
         super()._process_trajectory(trajectory)
-        last_step = trajectory.steps[-1]
         agent_id = trajectory.agent_id  # All the agents should have the same ID
+        agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
 
-        agent_buffer_trajectory = trajectory.to_agentbuffer()
-        
-        # Check if we used group rewards, warn if so.
-        self._warn_if_group_reward(agent_buffer_trajectory)
+        # CREATE SUPERTRACK DATA FOR EACH POINT IN THE TRAJECTORY 
+        add_supertrack_data_field(agent_buffer_trajectory)
 
         # Update the normalization
         if self.is_training:
             self.policy.actor.update_normalization(agent_buffer_trajectory)
             # self.optimizer.world_model.update_normalization(agent_buffer_trajectory)
-
-        # Bootstrap using the last step rather than the bootstrap step if max step is reached.
-        # Set last element to duplicate obs and remove dones.
-        if last_step.interrupted:
-            last_step_obs = last_step.obs
-            for i, obs in enumerate(last_step_obs):
-                agent_buffer_trajectory[ObsUtil.get_name_at_next(i)][-1] = obs
-            agent_buffer_trajectory[BufferKey.DONE][-1] = False
 
         self._append_to_update_buffer(agent_buffer_trajectory)
 

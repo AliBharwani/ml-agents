@@ -142,6 +142,26 @@ class Trajectory(NamedTuple):
     agent_id: str
     behavior_id: str
 
+    def to_supertrack_agentbuffer(self) -> AgentBuffer:
+        """
+        Converts a Trajectory to an AgentBuffer compatible with SuperTrack
+        :param trajectory: A Trajectory
+        :returns: AgentBuffer. Note that the length of the AgentBuffer will be one
+        less than the trajectory, as the next observation need to be populated from the last
+        step of the trajectory.
+        """
+        agent_buffer_trajectory = AgentBuffer()
+        obs = self.steps[0].obs
+        if len(obs) != 1:
+            raise Exception("Attempting to add trajectory with more than one observation to SuperTrack buffer", len(obs), obs)
+        for step, exp in enumerate(self.steps):
+            agent_buffer_trajectory[ObsUtil.get_name_at(0)].append(exp.obs[0])
+            agent_buffer_trajectory[BufferKey.DONE].append(exp.done)
+            agent_buffer_trajectory[BufferKey.CONTINUOUS_ACTION].append(
+                exp.action.continuous
+            )
+        return agent_buffer_trajectory
+
     def to_agentbuffer(self) -> AgentBuffer:
         """
         Converts a Trajectory to an AgentBuffer

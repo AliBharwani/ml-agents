@@ -108,6 +108,7 @@ class ModelSerializer:
                 for obs_spec in observation_specs
             ]
         else:
+            print("Serializing policy based on yaml file input_size, not BehaviorSpec obs shape")
             dummy_obs = torch.zeroes(batch_dim + [policy_input_setting])
 
         dummy_masks = torch.ones(

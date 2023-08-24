@@ -7,6 +7,8 @@ from mlagents.torch_utils import torch, nn, default_device
 
 from mlagents.trainers.buffer import AgentBuffer, BufferKey, RewardSignalUtil
 from mlagents.trainers.torch_entities.action_model import ActionModel
+from mlagents.trainers.torch_entities.encoders import VectorInput
+from mlagents.trainers.torch_entities.layers import LinearEncoder
 from mlagents.trainers.torch_entities.networks import Critic
 from mlagents.trainers.torch_entities.networks import Actor
 from mlagents_envs.base_env import ActionSpec, ObservationSpec
@@ -49,13 +51,41 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         raise Exception("Super Track Optimizer critic property called - should never happen!")
     
 
+
 class PolicyNetworkBody(nn.Module):
-     def __init__(
-               self,
-               network_settings: NetworkSettings,
-     ):
-          nn.Module.__init__(self)
-          
+    def __init__(
+            self,
+            network_settings: NetworkSettings,
+    ):
+        super().__init__(self)
+        self.network_settings = network_settings
+        self.normalize = network_settings.normalize
+        self.h_size = network_settings.hidden_units
+        self.input_size = self.network_settings.input_size
+        if (self.input_size == -1):
+            raise Exception("SuperTrack Policy Network created without input_size designated in yaml file")
+        
+        # Used to normalize inputs
+        self._obs_encoder : nn.Module = VectorInput(self.input_size, self.normalize)
+        self._body_encoder = LinearEncoder(
+            self.network_settings.input_size,
+            self.network_settings.num_layers,
+            self.h_size)
+
+    @property
+    def memory_size(self) -> int:
+        return 0
+        
+    def update_normalization(self, buffer: AgentBuffer) -> None:
+        # self._obs_encoder.update_normalization(buffer.input)
+        pass
+
+    def forward(self, inputs: List[torch.Tensor]):
+        if len(inputs) != 1:
+            raise Exception("SuperTrack policy network body initialized with multiple observations: ", len(inputs))
+        encoded_self = self._obs_encoder(inputs[0])
+        encoding = self._body_encoder(encoded_self)
+        return encoding
 
 class SuperTrackPolicyNetwork(nn.Module, Actor):
     def __init__(
@@ -83,21 +113,53 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
     def update_normalization(self, buffer: AgentBuffer) -> None:
         self.network_body.update_normalization(buffer)
 
+
+    @property
+    def memory_size(self) -> int:
+        return self.network_body.memory_size
+    
+
     def forward(
         self,
         inputs: List[torch.Tensor],
+        masks: Optional[torch.Tensor] = None,
+        memories: Optional[torch.Tensor] = None,
     ) -> Tuple[Union[int, torch.Tensor], ...]:
-        pass
+        """
+        Note: This forward() method is required for exporting to ONNX. Don't modify the inputs and outputs.
+
+        At this moment, torch.onnx.export() doesn't accept None as tensor to be exported,
+        so the size of return tuple varies with action spec.
+        """
+        encoding = self.network_body(
+            inputs, memories=memories, sequence_length=1
+        )
+
+        (
+            cont_action_out,
+            _disc_action_out,
+            _action_out_deprecated,
+            deterministic_cont_action_out,
+            _deterministic_disc_action_out,
+        ) = self.action_model.get_action_out(encoding, masks)
+        export_out = [ 
+            self.version_number,
+            self.memory_size_vector,
+            cont_action_out,
+            self.continuous_act_size_vector,
+            deterministic_cont_action_out,
+        ]
+        return tuple(export_out)
 
     def get_stats(
-    self,
-    inputs: List[torch.Tensor],
-    actions: AgentAction,
-    masks: Optional[torch.Tensor] = None,
-    memories: Optional[torch.Tensor] = None,
-    sequence_length: int = 1,
+        self,
+        inputs: List[torch.Tensor],
+        actions: AgentAction,
+        masks: Optional[torch.Tensor] = None,
+        memories: Optional[torch.Tensor] = None,
+        sequence_length: int = 1,
     ) -> Dict[str, Any]:
-        encoding, actor_mem_outs = self.network_body(
+        encoding = self.network_body(
             inputs, memories=memories, sequence_length=sequence_length
         )
 
@@ -125,6 +187,15 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """
-        action_out = self.network_body(inputs)
+        encoding = self.network_body(inputs)
+        action, log_probs, entropies = self.action_model(encoding, None) 
         run_out = {}
-        return action_out, run_out, torch.Tensor([])
+        # This is the clipped action which is not saved to the buffer
+        # but is exclusively sent to the environment.
+        run_out["env_action"] = action.to_action_tuple(
+            clip=self.action_model.clip_action
+        )
+        run_out["log_probs"] = log_probs
+        run_out["entropy"] = entropies
+
+        return action, run_out, None
