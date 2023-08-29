@@ -6,6 +6,7 @@ import attr
 from mlagents.torch_utils import torch, nn, default_device
 
 from mlagents.trainers.buffer import AgentBuffer, BufferKey, RewardSignalUtil
+from mlagents.trainers.supertrack import supertrack_utils
 from mlagents.trainers.torch_entities.action_model import ActionModel
 from mlagents.trainers.torch_entities.encoders import VectorInput
 from mlagents.trainers.torch_entities.layers import LinearEncoder
@@ -57,7 +58,7 @@ class PolicyNetworkBody(nn.Module):
             self,
             network_settings: NetworkSettings,
     ):
-        super().__init__(self)
+        super().__init__()
         self.network_settings = network_settings
         self.normalize = network_settings.normalize
         self.h_size = network_settings.hidden_units
@@ -80,14 +81,15 @@ class PolicyNetworkBody(nn.Module):
         # self._obs_encoder.update_normalization(buffer.input)
         pass
 
-    def forward(self, inputs: List[torch.Tensor]):
-        if len(inputs) != 1:
-            raise Exception("SuperTrack policy network body initialized with multiple observations: ", len(inputs))
-        encoded_self = self._obs_encoder(inputs[0])
+    def forward(self, inputs: torch.Tensor):
+        # if len(inputs) != 1:
+        #     raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
+        encoded_self = self._obs_encoder(inputs)
         encoding = self._body_encoder(encoded_self)
         return encoding
 
 class SuperTrackPolicyNetwork(nn.Module, Actor):
+    MODEL_EXPORT_VERSION = 1
     def __init__(
         self,
         observation_specs: List[ObservationSpec],
@@ -97,10 +99,21 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         tanh_squash: bool = False,
     ):
         super().__init__()
-        self.network_body = PolicyNetworkBody
+        self.network_body = PolicyNetworkBody(network_settings)
         self.action_spec = action_spec
+        self.continuous_act_size_vector = torch.nn.Parameter(
+            torch.Tensor([network_settings.output_size]), requires_grad=False
+        )
+        self.version_number = torch.nn.Parameter(
+            torch.Tensor([self.MODEL_EXPORT_VERSION]), requires_grad=False
+        )
+        self.memory_size_vector = torch.nn.Parameter(
+            torch.Tensor([0]), requires_grad=False
+        )
         self.encoding_size = network_settings.hidden_units
-        action_spec.continuous_size = network_settings.output_size
+        # Could convert action_spec to class instead of tuple, but having the dependency that Unity action size == Python action size
+        # is not a huge constraint
+        # action_spec.continuous_size = network_settings.output_size
         self.action_model = ActionModel(
             self.encoding_size,
             action_spec,
@@ -131,9 +144,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         At this moment, torch.onnx.export() doesn't accept None as tensor to be exported,
         so the size of return tuple varies with action spec.
         """
-        encoding = self.network_body(
-            inputs, memories=memories, sequence_length=1
-        )
+        encoding = self.network_body(inputs[0])
 
         (
             cont_action_out,
@@ -172,9 +183,9 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
     def get_action_and_stats(
         self,
         inputs: List[torch.Tensor],
-        _masks: Optional[torch.Tensor] = None,
-        _memories: Optional[torch.Tensor] = None,
-        _sequence_length: int = 1,
+        masks: Optional[torch.Tensor] = None,
+        memories: Optional[torch.Tensor] = None,
+        sequence_length: int = 1,
         deterministic=False,
     ) -> Tuple[AgentAction, Dict[str, Any], torch.Tensor]:
         """
@@ -187,7 +198,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """
-        encoding = self.network_body(inputs)
+        policy_input = supertrack_utils.process_raw_observations_to_policy_input(inputs[0])
+        encoding = self.network_body(policy_input)
         action, log_probs, entropies = self.action_model(encoding, None) 
         run_out = {}
         # This is the clipped action which is not saved to the buffer

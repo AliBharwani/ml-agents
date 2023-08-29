@@ -160,6 +160,10 @@ class Trajectory(NamedTuple):
             agent_buffer_trajectory[BufferKey.CONTINUOUS_ACTION].append(
                 exp.action.continuous
             )
+            agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ].append(step)
+            agent_buffer_trajectory[BufferKey.TRAJ_LEN].append(
+                len(self.steps)
+            )
         return agent_buffer_trajectory
 
     def to_agentbuffer(self) -> AgentBuffer:

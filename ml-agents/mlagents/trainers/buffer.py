@@ -526,3 +526,4 @@ class AgentBuffer(MutableMapping):
             return len(next(iter(self.values())))
         else:
             return 0
+()
