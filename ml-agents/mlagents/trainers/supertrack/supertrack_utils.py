@@ -6,7 +6,7 @@ import os
 from mlagents.torch_utils import torch
 from mlagents.trainers import supertrack
 
-from mlagents.trainers.buffer import AgentBuffer, BufferKey, ObservationKeyPrefix
+from mlagents.trainers.buffer import AgentBuffer, AgentBufferField, BufferKey, ObservationKeyPrefix
 
 from mlagents.trainers.trajectory import ObsUtil
 import attr
@@ -34,7 +34,7 @@ from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
 from mlagents.trainers.trainer.rl_trainer import RLTrainer
 
 
-TOTAL_OBS_LEN = 704
+TOTAL_OBS_LEN = 720
 CHAR_STATE_LEN = 259
 NUM_BONES = 17
 ENTRIES_PER_BONE = 13
@@ -77,11 +77,13 @@ class SuperTrackDataField():
     
 
 
-def extract_char_state(all_actions, idx) -> (CharState, int):
-    positions = []
-    rotations = []
-    velocities = []
-    rot_velocities = []
+def extract_char_state(all_actions: np.ndarray, idx: int) -> (CharState, int):
+    positions: List[np.ndarray] = []
+    rotations: List[np.ndarray] = []
+    velocities: List[np.ndarray] = []
+    rot_velocities: List[np.ndarray] = []
+    heights: List[np.ndarray] = []
+    rotations_two_axis_form: List[np.ndarray] = []
     for _ in range(NUM_BONES):
         positions.append(all_actions[idx:idx+3])
         idx += 3
@@ -91,33 +93,44 @@ def extract_char_state(all_actions, idx) -> (CharState, int):
         idx += 3
         rot_velocities.append(all_actions[idx:idx+3])
         idx += 3
-    return CharState(positions, rotations, velocities, rot_velocities), idx 
+        heights.append(all_actions[idx])
+        idx += 1
+    up_dir = all_actions[idx:]
+    return CharState(positions,
+                     rotations,
+                     velocities,
+                     rot_velocities, 
+                     heights,
+                     up_dir, 
+                     rotations_two_axis_form), idx 
 
 def extract_pd_targets(all_actions, idx) -> (PDTargets, int):
     rotations = []
     rot_velocities = []
+    rotations_two_axis_form: List[np.ndarray] = []
     for _ in range(NUM_BONES):
         rotations.append(Quat(all_actions[idx], all_actions[idx + 1], all_actions[idx + 2], all_actions[idx + 3]))
         idx += 4
         rot_velocities.append(all_actions[idx:idx+3])
         idx += 3
-    return PDTargets(rotations, rot_velocities), idx 
+    return PDTargets(rotations, rot_velocities, rotations_two_axis_form), idx 
 
 def add_supertrack_data_field(agent_buffer_trajectory: AgentBuffer) -> AgentBuffer:
-    supertrack_data = []
-    for i in range(len(agent_buffer_trajectory)):
-        actions = agent_buffer_trajectory[(ObservationKeyPrefix.OBSERVATION, 0)][i]
-        if (len(actions) != TOTAL_OBS_LEN):
-            raise Exception(f'Obs was of len {len(actions)} expected {TOTAL_OBS_LEN}')
+    supertrack_data = AgentBufferField()
+    for i in range(agent_buffer_trajectory.num_experiences):
+        obs = agent_buffer_trajectory[(ObservationKeyPrefix.OBSERVATION, 0)][i]
+        if (len(obs) != TOTAL_OBS_LEN):
+            raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
+        # print(f"Obs at idx {agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ][i]} : {obs}")
         # Extract sim char state
         idx = 0
-        sim_char_state, idx = extract_char_state(actions, idx)
+        sim_char_state, idx = extract_char_state(obs, idx)
         # Extract kin char state
-        kin_char_state, idx = extract_char_state(actions, idx)
+        kin_char_state, idx = extract_char_state(obs, idx)
         # Extract pre_targets
-        pre_targets, idx = extract_pd_targets(actions, idx)
+        pre_targets, idx = extract_pd_targets(obs, idx)
         # Extract post_targets
-        post_targets, idx = extract_pd_targets(actions, idx)
+        post_targets, idx = extract_pd_targets(obs, idx)
         supertrack_data.append(
             SuperTrackDataField(
             sim_char_state=sim_char_state, 
@@ -125,7 +138,7 @@ def add_supertrack_data_field(agent_buffer_trajectory: AgentBuffer) -> AgentBuff
             pre_targets=pre_targets,
             post_targets=post_targets))
 
-
+# mlagents-learn Assets\config\SuperTrackPracticeConfig.yaml --force
     agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA] = supertrack_data
     
 

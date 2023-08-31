@@ -507,6 +507,7 @@ class AgentBuffer(MutableMapping):
                 f"The length of the fields {key_list} were not of same length"
             )
         for field_key in key_list:
+            # print("Extracting field key: ", field_key)
             target_buffer[field_key].extend(
                 self[field_key].get_batch(
                     batch_size=batch_size, training_length=training_length

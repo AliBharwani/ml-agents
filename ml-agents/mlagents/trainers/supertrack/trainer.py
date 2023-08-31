@@ -248,6 +248,7 @@ class SuperTrackTrainer(RLTrainer):
         """
         super()._process_trajectory(trajectory)
         agent_id = trajectory.agent_id  # All the agents should have the same ID
+        print(f"Num exp in trajectory being processed:  {len(trajectory.steps)}")
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
 
         # CREATE SUPERTRACK DATA FOR EACH POINT IN THE TRAJECTORY 
