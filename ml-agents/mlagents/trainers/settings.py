@@ -22,6 +22,8 @@ import numpy as np
 import math
 import copy
 
+import torch
+
 from mlagents.trainers.cli_utils import StoreConfigFile, DetectDefault, parser
 from mlagents.trainers.cli_utils import load_config
 from mlagents.trainers.exception import TrainerConfigError, TrainerConfigWarning
@@ -113,6 +115,14 @@ class ConditioningType(Enum):
     HYPER = "hyper"
     NONE = "none"
 
+class ActivationType(Enum):
+    ELU = "elu"
+    SWISH = "swish"
+    RELU = "relu"
+
+    
+
+
 
 @attr.s(auto_attribs=True)
 class NetworkSettings:
@@ -136,6 +146,7 @@ class NetworkSettings:
     normalize: bool = False
     hidden_units: int = 128
     training_window: int = 32
+    activation_function = ActivationType.SWISH
     num_layers: int = 2
     vis_encode_type: EncoderType = EncoderType.SIMPLE
     memory: Optional[MemorySettings] = None

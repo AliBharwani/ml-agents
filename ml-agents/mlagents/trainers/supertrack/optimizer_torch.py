@@ -40,6 +40,16 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     init_entcoef: float = 1.0
     
 class TorchSuperTrackOptimizer(TorchOptimizer):
+
+    def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
+        super().__init__(policy, trainer_settings)
+        self._world_model = WorldModelNetwork(
+            trainer_settings.world_model_network_settings
+        )
+
+
+
+
     def update(self, batch: AgentBuffer, num_sequences: int) -> Dict[str, float]:
         return
     

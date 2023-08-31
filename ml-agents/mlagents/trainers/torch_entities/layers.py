@@ -2,6 +2,7 @@ from mlagents.torch_utils import torch
 import abc
 from typing import Tuple
 from enum import Enum
+from mlagents.trainers.settings import ActivationType
 from mlagents.trainers.torch_entities.model_serialization import exporting_to_onnx
 
 
@@ -28,6 +29,11 @@ _init_methods = {
     Initialization.Normal: torch.nn.init.normal_,
 }
 
+_activation_functions = {
+    ActivationType.ELU: torch.nn.ELU(),
+    ActivationType.SWISH: torch.nn.SiLU(),  # Swish is also known as SiLU
+    ActivationType.RELU: torch.nn.ReLU(),
+}
 
 def linear_layer(
     input_size: int,
@@ -134,7 +140,6 @@ class LinearEncoder(torch.nn.Module):
     """
     Linear layers.
     """
-
     def __init__(
         self,
         input_size: int,
@@ -142,8 +147,10 @@ class LinearEncoder(torch.nn.Module):
         hidden_size: int,
         kernel_init: Initialization = Initialization.KaimingHeNormal,
         kernel_gain: float = 1.0,
+        activation_function_type: ActivationType = ActivationType.SWISH,
     ):
         super().__init__()
+        activation_function = _activation_functions[activation_function_type]
         self.layers = [
             linear_layer(
                 input_size,
@@ -152,7 +159,7 @@ class LinearEncoder(torch.nn.Module):
                 kernel_gain=kernel_gain,
             )
         ]
-        self.layers.append(Swish())
+        self.layers.append(activation_function)
         for _ in range(num_layers - 1):
             self.layers.append(
                 linear_layer(
@@ -162,7 +169,7 @@ class LinearEncoder(torch.nn.Module):
                     kernel_gain=kernel_gain,
                 )
             )
-            self.layers.append(Swish())
+            self.layers.append(activation_function)
         self.seq_layers = torch.nn.Sequential(*self.layers)
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
