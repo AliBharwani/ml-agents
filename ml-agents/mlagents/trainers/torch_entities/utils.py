@@ -234,6 +234,10 @@ class ModelUtils:
         calling as_tensor on the list directly.
         """
         return torch.as_tensor(np.asanyarray(ndarray_list), dtype=dtype)
+    
+    @staticmethod
+    def irregular_ndarrays_to_tensor(ndarray_list: List[np.ndarray]) -> torch.Tensor:
+        return torch.from_numpy(np.concatenate([np.ravel(arr) for arr in ndarray_list]))
 
     @staticmethod
     def list_to_tensor_list(

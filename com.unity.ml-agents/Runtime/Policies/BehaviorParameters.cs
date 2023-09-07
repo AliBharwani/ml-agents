@@ -68,7 +68,7 @@ namespace Unity.MLAgents.Policies
     /// </summary>
     /// <remarks>At runtime, this component generates the agent's policy objects
     /// according to the settings you specified in the Editor.</remarks>
-    [AddComponentMenu("ML Agents/Behavior Parameters", (int)MenuGroup.Default)]
+    [AddComponentMenu("ML Agents/Behavior Parameters!", (int)MenuGroup.Default)]
     public class BehaviorParameters : MonoBehaviour
     {
         [HideInInspector, SerializeField]

@@ -6,10 +6,9 @@ import attr
 from mlagents.torch_utils import torch, nn, default_device
 
 from mlagents.trainers.buffer import AgentBuffer, BufferKey, RewardSignalUtil
-from mlagents.trainers.supertrack import supertrack_utils
 from mlagents.trainers.torch_entities.action_model import ActionModel
 from mlagents.trainers.torch_entities.encoders import VectorInput
-from mlagents.trainers.torch_entities.layers import LinearEncoder
+from mlagents.trainers.torch_entities.layers import Initialization, LinearEncoder
 from mlagents.trainers.torch_entities.networks import Critic
 from mlagents.trainers.torch_entities.networks import Actor
 from mlagents_envs.base_env import ActionSpec, ObservationSpec
@@ -37,13 +36,23 @@ class WorldModelNetwork(nn.Module):
             network_settings: NetworkSettings,
     ):
         super().__init__()
+        self.network_settings = network_settings
         self.normalize = network_settings.normalize
         self.h_size = network_settings.hidden_units
-        self.input_size = self.network_settings.input_size
+        self.input_size = network_settings.input_size
         if (self.input_size == -1):
             raise Exception("SuperTrack World Model created without input_size designated in yaml file")
+        # MY TODO: Replace with 1DBatchNorm layer from pytorch
         self._obs_encoder : nn.Module = VectorInput(self.input_size, self.normalize)
         self._body_encoder = LinearEncoder(
             self.network_settings.input_size,
             self.network_settings.num_layers,
-            self.h_size)
+            self.h_size,
+            Initialization.KaimingHeNormal,
+            1,
+            network_settings.activation_function)
+        
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        encoded_self = self._obs_encoder(inputs)
+        encoding = self._body_encoder(encoded_self)
+        return encoding

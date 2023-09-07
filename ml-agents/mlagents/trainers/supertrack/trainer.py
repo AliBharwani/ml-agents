@@ -7,7 +7,7 @@ from typing import Dict, cast
 import os
 
 from mlagents.trainers.buffer import BufferKey
-from mlagents.trainers.supertrack.supertrack_utils import add_supertrack_data_field
+from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils
 
 from mlagents.trainers.trajectory import ObsUtil
 import attr
@@ -90,6 +90,8 @@ class SuperTrackTrainer(RLTrainer):
         self.update_steps = 1
         self.steps_per_update = self.hyperparameters.steps_per_update
         self.checkpoint_replay_buffer = self.hyperparameters.save_replay_buffer
+        self.wm_window = self.trainer_settings.world_model_network_settings.training_window
+        self.policy_window = self.trainer_settings.policy_network_settings.training_window
 
 
 ### FROM OFFPOLICYTRAINER LEVEL
@@ -125,6 +127,21 @@ class SuperTrackTrainer(RLTrainer):
                 f"Saved Experience Replay Buffer ({os.path.getsize(filename)} bytes)."
             )
 
+    def maybe_load_replay_buffer(self):
+        # Load the replay buffer if load
+        if self.load and self.checkpoint_replay_buffer:
+            try:
+                self.load_replay_buffer()
+            except (AttributeError, FileNotFoundError):
+                logger.warning(
+                    "Replay buffer was unable to load, starting from scratch."
+                )
+            logger.debug(
+                "Loaded update buffer with {} sequences".format(
+                    self.update_buffer.num_experiences
+                )
+            )
+
     def load_replay_buffer(self) -> None:
         """
         Loads the last saved replay buffer from a file.
@@ -145,24 +162,9 @@ class SuperTrackTrainer(RLTrainer):
         :return: A boolean corresponding to whether or not _update_policy() can be run
         """
         return (
-            self.update_buffer.num_experiences >= self.hyperparameters.batch_size
+            self.update_buffer.num_experiences  * min(self.wm_window, self.policy_window) >= self.hyperparameters.batch_size
             and self._step >= self.hyperparameters.buffer_init_steps
         )
-
-    def maybe_load_replay_buffer(self):
-        # Load the replay buffer if load
-        if self.load and self.checkpoint_replay_buffer:
-            try:
-                self.load_replay_buffer()
-            except (AttributeError, FileNotFoundError):
-                logger.warning(
-                    "Replay buffer was unable to load, starting from scratch."
-                )
-            logger.debug(
-                "Loaded update buffer with {} sequences".format(
-                    self.update_buffer.num_experiences
-                )
-            )
 
     def add_policy(
         self, parsed_behavior_id: BehaviorIdentifiers, policy: Policy
@@ -180,8 +182,6 @@ class SuperTrackTrainer(RLTrainer):
         self.policy = policy
         self.policies[parsed_behavior_id.behavior_id] = policy
         self.optimizer = self.create_optimizer()
-        for _reward_signal in self.optimizer.reward_signals.keys():
-            self.collected_rewards[_reward_signal] = defaultdict(lambda: 0)
 
         self.model_saver.register(self.policy)
         self.model_saver.register(self.optimizer)
@@ -200,31 +200,21 @@ class SuperTrackTrainer(RLTrainer):
         until the steps_per_update ratio is met.
         """
         has_updated = False
-        self.cumulative_returns_since_policy_update.clear()
-        n_sequences = max(
-            int(self.hyperparameters.batch_size / self.policy.training_window), 1
-        )
-
         batch_update_stats: Dict[str, list] = defaultdict(list)
         while (
             self._step - self.hyperparameters.buffer_init_steps
         ) / self.update_steps > self.steps_per_update:
             logger.debug(f"Updating SuperTrack policy at step {self._step}")
             buffer = self.update_buffer
-            if self.update_buffer.num_experiences >= self.hyperparameters.batch_size:
-                sampled_minibatch = buffer.sample_mini_batch(
+            if self.update_buffer.num_experiences >= self.hyperparameters.batch_size  * self.wm_window:
+                world_model_minibatch = buffer.supertrack_sample_mini_batch(
                     self.hyperparameters.batch_size,
-                    sequence_length=self.policy.training_window,
+                    self.trainer_settings.world_model_network_settings.training_window,
                 )
-                # Get rewards for each reward
-                for name, signal in self.optimizer.reward_signals.items():
-                    sampled_minibatch[RewardSignalUtil.rewards_key(name)] = (
-                        signal.evaluate(sampled_minibatch) * signal.strength
-                    )
 
-                update_stats = self.optimizer.update(sampled_minibatch, n_sequences)
-                for stat_name, value in update_stats.items():
-                    batch_update_stats[stat_name].append(value)
+                update_stats = self.optimizer.update_world_model(world_model_minibatch, self.hyperparameters.batch_size, self.wm_window)
+                # for stat_name, value in update_stats.items():
+                    # batch_update_stats[stat_name].append(value)
 
                 self.update_steps += 1
 
@@ -234,7 +224,7 @@ class SuperTrackTrainer(RLTrainer):
 
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
-        if self.update_buffer.num_experiences > self.hyperparameters.buffer_size:
+        if self.update_buffer.num_experiences > self.hyperparameters.buffer_size * max(self.wm_window, self.policy_window):
             self.update_buffer.truncate(
                 int(self.hyperparameters.buffer_size * BUFFER_TRUNCATE_PERCENT)
             )
@@ -252,7 +242,7 @@ class SuperTrackTrainer(RLTrainer):
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
 
         # CREATE SUPERTRACK DATA FOR EACH POINT IN THE TRAJECTORY 
-        add_supertrack_data_field(agent_buffer_trajectory)
+        SupertrackUtils.add_supertrack_data_field(agent_buffer_trajectory)
 
         # Update the normalization
         if self.is_training:
@@ -263,6 +253,7 @@ class SuperTrackTrainer(RLTrainer):
 
         if trajectory.done_reached:
             self._update_end_episode_stats(agent_id, self.optimizer)
+        print("Done processing trajectory")
 
     def create_optimizer(self) -> TorchOptimizer:
         return TorchSuperTrackOptimizer(  # type: ignore
