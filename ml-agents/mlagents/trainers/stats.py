@@ -73,6 +73,7 @@ class StatsSummary(NamedTuple):
 
 class StatsPropertyType(Enum):
     HYPERPARAMETERS = "hyperparameters"
+    UNITY_JSON = "unity_json"
     SELF_PLAY = "selfplay"
 
 

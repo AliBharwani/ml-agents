@@ -8,7 +8,7 @@ from mlagents.torch_utils import torch, nn, default_device
 from mlagents.trainers.buffer import AgentBuffer, BufferKey, RewardSignalUtil
 from mlagents.trainers.torch_entities.action_model import ActionModel
 from mlagents.trainers.torch_entities.encoders import VectorInput
-from mlagents.trainers.torch_entities.layers import Initialization, LinearEncoder
+from mlagents.trainers.torch_entities.layers import Initialization, LinearEncoder, linear_layer
 from mlagents.trainers.torch_entities.networks import Critic
 from mlagents.trainers.torch_entities.networks import Actor
 from mlagents_envs.base_env import ActionSpec, ObservationSpec
@@ -46,13 +46,15 @@ class WorldModelNetwork(nn.Module):
         self._obs_encoder : nn.Module = VectorInput(self.input_size, self.normalize)
         self._body_encoder = LinearEncoder(
             self.network_settings.input_size,
-            self.network_settings.num_layers,
+            self.network_settings.num_layers - 1,
             self.h_size,
             Initialization.KaimingHeNormal,
             1,
             network_settings.activation_function)
+        self._output_layer = linear_layer(self.h_size, self.network_settings.output_size)
         
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        encoded_self = self._obs_encoder(inputs)
-        encoding = self._body_encoder(encoded_self)
-        return encoding
+        result = self._output_layer(self._body_encoder(self._obs_encoder(inputs)))
+        # Clip the outputs to the range [-100, 100]
+        # result = torch.clamp(result, min=-100, max=100)
+        return result

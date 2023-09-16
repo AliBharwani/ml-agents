@@ -3,6 +3,7 @@ from typing import Dict, NamedTuple, List, Any, Optional, Callable, Set
 import cloudpickle
 import enum
 import time
+from mlagents.trainers import unity_config_sidechannel
 
 from mlagents_envs.environment import UnityEnvironment
 from mlagents_envs.exception import (
@@ -41,6 +42,7 @@ from mlagents_envs.side_channel.stats_side_channel import (
 from mlagents.trainers.training_analytics_side_channel import (
     TrainingAnalyticsSideChannel,
 )
+from mlagents.trainers.unity_config_sidechannel import UnityConfigSideChannel
 from mlagents_envs.side_channel.side_channel import SideChannel
 
 
@@ -139,8 +141,10 @@ def worker(
 
     stats_channel = StatsSideChannel()
     training_analytics_channel: Optional[TrainingAnalyticsSideChannel] = None
+    unity_config_channel: Optional[UnityConfigSideChannel] = None
     if worker_id == 0:
         training_analytics_channel = TrainingAnalyticsSideChannel()
+        unity_config_channel = UnityConfigSideChannel(run_options.checkpoint_settings.write_path)
     env: UnityEnvironment = None
     # Set log level. On some platforms, the logger isn't common with the
     # main process, so we need to set it again.
@@ -159,6 +163,8 @@ def worker(
         side_channels = [env_parameters, engine_configuration_channel, stats_channel]
         if training_analytics_channel is not None:
             side_channels.append(training_analytics_channel)
+        if unity_config_channel is not None:
+            side_channels.append(unity_config_channel)
 
         env = env_factory(worker_id, side_channels)
         if (

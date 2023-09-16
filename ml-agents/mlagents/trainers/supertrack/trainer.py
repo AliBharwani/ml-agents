@@ -92,6 +92,8 @@ class SuperTrackTrainer(RLTrainer):
         self.checkpoint_replay_buffer = self.hyperparameters.save_replay_buffer
         self.wm_window = self.trainer_settings.world_model_network_settings.training_window
         self.policy_window = self.trainer_settings.policy_network_settings.training_window
+        self.effective_wm_window = self.wm_window + 1 # we include an extra piece of dating during training to simplify code
+        self.effective_policy_window = self.policy_window + 1 
 
 
 ### FROM OFFPOLICYTRAINER LEVEL
@@ -162,7 +164,7 @@ class SuperTrackTrainer(RLTrainer):
         :return: A boolean corresponding to whether or not _update_policy() can be run
         """
         return (
-            self.update_buffer.num_experiences  * min(self.wm_window, self.policy_window) >= self.hyperparameters.batch_size
+            self.update_buffer.num_experiences  >= self.hyperparameters.batch_size  * max(self.effective_wm_window, self.effective_policy_window)
             and self._step >= self.hyperparameters.buffer_init_steps
         )
 
@@ -206,17 +208,20 @@ class SuperTrackTrainer(RLTrainer):
         ) / self.update_steps > self.steps_per_update:
             logger.debug(f"Updating SuperTrack policy at step {self._step}")
             buffer = self.update_buffer
-            if self.update_buffer.num_experiences >= self.hyperparameters.batch_size  * self.wm_window:
+            print(f"Updating SuperTrack policy at step {self._step}, buffer len: {self.update_buffer.num_experiences}")
+            if self.update_buffer.num_experiences >= self.hyperparameters.batch_size  * self.effective_wm_window:
                 world_model_minibatch = buffer.supertrack_sample_mini_batch(
                     self.hyperparameters.batch_size,
-                    self.trainer_settings.world_model_network_settings.training_window,
+                    self.wm_window,
                 )
-
+                print("Fetched world model minibatch")
                 update_stats = self.optimizer.update_world_model(world_model_minibatch, self.hyperparameters.batch_size, self.wm_window)
-                # for stat_name, value in update_stats.items():
-                    # batch_update_stats[stat_name].append(value)
+                for stat_name, value in update_stats.items():
+                    batch_update_stats[stat_name].append(value)
 
                 self.update_steps += 1
+                print(f"Updating policy, update steps: {self.update_steps}")
+
 
                 for stat, stat_list in batch_update_stats.items():
                     self._stats_reporter.add_stat(stat, np.mean(stat_list))
@@ -224,7 +229,7 @@ class SuperTrackTrainer(RLTrainer):
 
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
-        if self.update_buffer.num_experiences > self.hyperparameters.buffer_size * max(self.wm_window, self.policy_window):
+        if self.update_buffer.num_experiences > self.hyperparameters.buffer_size * max(self.effective_wm_window, self.effective_policy_window):
             self.update_buffer.truncate(
                 int(self.hyperparameters.buffer_size * BUFFER_TRUNCATE_PERCENT)
             )

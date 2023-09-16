@@ -1,12 +1,13 @@
+from os import name
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 from mlagents.trainers.settings import NetworkSettings, OffPolicyHyperparamSettings
 import attr
-
+import pdb
 from mlagents.torch_utils import torch, nn, default_device
 import pytorch3d.transforms as pyt
 from mlagents.trainers.buffer import AgentBuffer, AgentBufferField, BufferKey, RewardSignalUtil
-from mlagents.trainers.supertrack.supertrack_utils import NUM_BONES, CharState, SuperTrackDataField, SupertrackUtils
+from mlagents.trainers.supertrack.supertrack_utils import NUM_BONES, NUM_T_BONES, CharState, SuperTrackDataField, SupertrackUtils
 from mlagents.trainers.supertrack.world_model import WorldModelNetwork
 from mlagents.trainers.torch_entities.action_model import ActionModel
 from mlagents.trainers.torch_entities.encoders import VectorInput
@@ -45,6 +46,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
     def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
         super().__init__(policy, trainer_settings)
+        print("Set anomaly detection")
+        torch.autograd.set_detect_anomaly(True)
         self._world_model = WorldModelNetwork(
             trainer_settings.world_model_network_settings
         )
@@ -61,19 +64,26 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             cur_rots, # shape [batch_size, num_bones, 4]
             cur_vels,   # shape [batch_size, num_bones, 3]
             cur_rot_vels, # shape [batch_size, num_bones, 3]
-            cur_heights, # shape [batch_size, num_bones, 1]
-            cur_up_dir): # shape [batch_size, num_bones]
+            cur_heights, # shape [batch_size, num_bones]
+            cur_up_dir): # shape [batch_size, 3]
         
         B = cur_pos.shape[0] # batch_size
         root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
-        inv_root_rots = pyt.quaternion_invert(cur_pos[:, 0:1, :]) # shape [batch_size, 1, 4]
+        inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
         local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_bones, 3]
         local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_bones, 4]
         two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots)) # shape [batch_size, num_bones, 6]
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_bones, 3]
 
-        return local_pos.view(B, -1),  two_axis_rots.view(B, -1), local_vels.view(B, -1), local_rot_vels.view(B, -1), cur_heights[:, 1:, :].view(B, -1), cur_up_dir[:, 1:, :]
+        # return_tensors = [local_pos, two_axis_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
+        return_tensors = [(local_pos, 'local_pos'), (two_axis_rots, 'two_axis_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
+        # Have to reshape instead of view because stride can be messed up in some cases
+        # return [tensor.reshape(B, -1) for tensor in return_tensors]
+        # for tensor, name in return_tensors:
+        #     print(f"{name} dtype: {tensor.dtype}")
+        # pdb.set_trace()
+        return [tensor.reshape(B, -1) for tensor, name in return_tensors]
 
 
     @timed
@@ -83,68 +93,92 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         if (batch.num_experiences // window_size != batch_size):
                 raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size}, received {batch.num_experiences}")
 
-        # sim_char_tensors = [data.to_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
+        # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
         st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
-        sim_char_tensors = [st_datum.sim_char_state.to_tensors() for st_datum in st_data]
+        sim_char_tensors = [st_datum.sim_char_state.as_tensors for st_datum in st_data]
 
         # Unholy python wizardry. We take the st_tensors in the form: [(pos1, rots1, vels1, ...) , (pos2, rots2, vels2, ...), ...]
         # we unpack it with * to make it as if we were passing the each tuple as a separate argument to zip: zip((pos1, rots1, vels1, ...), (pos2, rots2, vels2, ...), ...)
         # zip then TRANSPOSES our tuples to go along the axis of the first element of each tuple: (pos1, pos2, ...), (rots1, rots2, ...), (vels1, vels2, ...), ...)
+        # We then STACK every tuple so : (pos1: [17, 3], pos2: [17, 3], ... pos_n), => tensor of shape [n, 17, 3]
         zipped_sim_tensors = [torch.stack(data_tuple, dim=0) for data_tuple in zip(*sim_char_tensors)]
-        # print([list(tensor.shape) for tensor in zipped_tensors])
-        # reshape to [batch_size, window_size, ...]
-        # print([tensor.shape[1:] for tensor in zipped_tensors])
-        # print([list(tensor.shape)[1:] for tensor in zipped_tensors])
 
-        positions, rotations, vels, rot_vels, heights, up_dir = [tensor.view(batch_size, window_size, *list(tensor.shape)[1:]) for tensor in zipped_sim_tensors]
-        # positions, rotations, vels, rot_vels, heights, up_dir = list(zip(*sim_char_tensors))
-        # positions = positions.view(batch_size, window_size, NUM_BONES, 3)
-        # rotations = rotations.view(batch_size, window_size, NUM_BONES, 4)
-        # vels = vels.view(batch_size, window_size, NUM_BONES, 3)
-        # rot_vels = rot_vels.view(batch_size, window_size, NUM_BONES, 3)
-        # heights = heights.view(batch_size, window_size, NUM_BONES, 1)
-        # up_dir = up_dir.view(batch_size, window_size, 3)
+        positions, rotations, vels, rot_vels, heights, up_dir = [tensor.reshape(batch_size, window_size, *list(tensor.shape)[1:]) for tensor in zipped_sim_tensors]
         
-        kin_target_tensors = [st_datum.post_targets.to_tensors() for st_datum in st_data]
-        kin_rot_t, kin_rvel_t = [torch.stack(data_tuple, dim=0) for data_tuple in zip(*kin_target_tensors)]
-        kin_rot_t =  pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(kin_rot_t)).view(batch_size, window_size, NUM_BONES, 6)
-        kin_rvel_t = kin_rvel_t.view(batch_size, window_size, NUM_BONES, 3)
+        kin_target_tensors = [st_datum.post_targets.as_tensors for st_datum in st_data]
+
+        zipped_kin_tensors = [torch.stack(data_tuple, dim=0) for data_tuple in zip(*kin_target_tensors)]
+        kin_rot_t, kin_rvel_t = [tensor.reshape(batch_size, window_size, *list(tensor.shape)[1:])[:, :, 1:, :] for tensor in zipped_kin_tensors]
+        # kin_rot_t, kin_rvel_t = [torch.stack(data_tuple, dim=0) for data_tuple in zip(*kin_target_tensors)]
+        kin_rot_t = SupertrackUtils.normalize_quat(kin_rot_t)
+        kin_rot_t =  pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(kin_rot_t))
 
         cur_pos = positions[:, 0, ...].clone()
         cur_rots = rotations[:, 0, ...].clone()
         cur_vels = vels[:, 0, ...].clone()
         cur_rot_vels = rot_vels[:, 0, ...].clone()
 
+        for tensor, name in [(cur_pos, 'cur_pos'), (cur_rots, 'cur_rots'), (cur_vels, 'cur_vels'), (cur_rot_vels, 'cur_rot_vels')]:
+            if torch.isnan(tensor).any():
+                raise Exception(f"Nan in {name} at start of update_world_model")
+
         loss = 0
         wpos_loss = wvel_loss = wang_loss = wrot_loss = 0
 
 
-        for i in range(window_size):
+        for i in range(raw_window_size):
             cur_heights = heights[:, i, ...]
             cur_up_dir = up_dir[:, i, ...]
+            # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
+            cur_pos[:, 0, :] = positions[:, i, 0, :]
+            cur_rots[:, 0, :] = rotations[:, i , 0, :]
             input = torch.cat((*self.local(cur_pos, cur_rots, cur_vels, cur_rot_vels, cur_heights, cur_up_dir),
-                            kin_rot_t[:, i, ...].view(batch_size, -1),
-                            kin_rvel_t[:, i, ...].view(batch_size, -1)), 
+                            kin_rot_t[:, i, ...].reshape(batch_size, -1),
+                            kin_rvel_t[:, i, ...].reshape(batch_size, -1)), 
                             dim=-1)
             output = self._world_model(input)
             local_accel, local_rot_accel = SupertrackUtils.split_world_model_output(output)
             # Convert to world space
             root_rot = cur_rots[:, 0:1, :]
             accel = pyt.quaternion_apply(root_rot, local_accel)
-            rot_accel = pyt.quaternion_apply(root_rot, local_rot_accel)
+            rot_accel_q = pyt.quaternion_multiply(root_rot, pyt.axis_angle_to_quaternion(local_rot_accel))
+            rot_accel = pyt.quaternion_to_axis_angle(rot_accel_q)
+            zeros_like_accel = torch.zeros((batch_size, 1, 3))
+            accel = torch.cat((zeros_like_accel, accel), dim=1)
+            rot_accel = torch.cat((zeros_like_accel, rot_accel), dim=1)
             # Integrate
+            # pdb.set_trace()
             cur_pos = cur_pos + self.dtime*cur_vels
-            cur_rots = pyt.matrix_to_quaternion(pyt.axis_angle_to_matrix(cur_rot_vels*self.dtime) @ pyt.quaternion_to_matrix(cur_rots))
+            cur_rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(cur_rot_vels*self.dtime) , cur_rots)
+            if torch.isnan(cur_rots).any():
+                raise Exception(f"Nan in cur_rots at step {i}, cur_rots: {cur_rots} \n cur_rot_vels: {cur_rot_vels}")
+
             cur_vels = cur_vels + self.dtime*accel
             cur_rot_vels =  pyt.matrix_to_axis_angle(pyt.axis_angle_to_matrix(cur_rot_vels) @ pyt.axis_angle_to_matrix(self.dtime*rot_accel))
+            # Index with [:, 1:, :] because we're not updating the roots data. We don't update it for cur_pos or cur_rots either, but those are already in the shape we need
+            # cur_vels[:, 1:, :] = cur_vels[:, 1:, :] + self.dtime*accel
+            # cur_rot_vels[:, 1:, :] =  pyt.matrix_to_axis_angle(pyt.axis_angle_to_matrix(cur_rot_vels[:, 1:, :]) @ pyt.axis_angle_to_matrix(self.dtime*rot_accel))
+            if torch.isnan(cur_rot_vels).any():
+                raise Exception(f"Nan in cur_rot_vels at step {i} cur_rot_vels:{cur_rot_vels} \n rot_accel: {rot_accel}")
             # Update loss
-            loss, wp, wv, wa, wr = self.world_model_loss(cur_pos, positions[:, i, ...], cur_rots, rotations[:, i, ...], cur_vels, vels[:, i, ...], cur_rot_vels, rot_vels[:, i, ...])
+            loss, wp, wv, wa, wr = self.world_model_loss(cur_pos[:, 1:, :],
+                                                        positions[:, i+1, 1:, :],
+                                                        cur_rots[:, 1:, :],
+                                                        rotations[:, i+1, 1:, :],
+                                                        cur_vels[:, 1:, :], 
+                                                        vels[:, i+1, 1:, :], 
+                                                        cur_rot_vels[:, 1:, :], 
+                                                        rot_vels[:, i+1, 1:, :])
             loss += loss
             wpos_loss += wp
             wvel_loss += wv
             wang_loss += wa
             wrot_loss += wr
-        update_stats = {'wpos_loss': wpos_loss, 'wvel_loss': wvel_loss, 'wang_loss': wang_loss, 'wrot_loss': wrot_loss}
+        update_stats = {'World Model/wpos_loss': wpos_loss.item(),
+                         'World Model/wvel_loss': wvel_loss.item(),
+                         'World Model/wang_loss': wang_loss.item(),
+                         'World Model/wrot_loss': wrot_loss.item(),
+                         'World Model/total loss': loss.item()}
         # We want every loss to give roughly equal contribution
         # to do this, we make sure that, eg, w_pos_loss * pos_loss = total_loss / 4
         # w_pos_loss = total_loss/(pos_loss * 4)
@@ -158,13 +192,14 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     @timed
     def world_model_loss(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
         wpos = wvel = wrot = wang = 0.1
+        B = pos1.shape[0]
         wp = wpos*torch.mean(torch.sum(torch.abs(pos1-pos2), dim = -1))
-        wv += wvel*torch.mean(torch.sum(torch.abs(vel1-vel2), dim = -1))
-        wa += wang*torch.mean(torch.sum(torch.abs(rvel1-rvel2), dim = -1))
-        wr += wrot*torch.mean(torch.sum(
-                            pyt.so3_rotation_angle(
-                                pyt.quaternion_to_matrix(
-                                    pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2))))))
+        wv = wvel*torch.mean(torch.sum(torch.abs(vel1-vel2), dim = -1))
+        wa = wang*torch.mean(torch.sum(torch.abs(rvel1-rvel2), dim = -1))
+        quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
+        mat_diffs = pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)
+        # NVM: Use cos_angle=True to avoid NaNs, esp in backwards pass. This is because acos(x) is not differentiable at |x| > 1
+        wr = wrot*torch.mean(torch.sum(torch.abs(pyt.so3_rotation_angle(mat_diffs))))
         loss = wp + wv + wa + wr
         return loss, wp, wv, wa, wr
 
@@ -326,6 +361,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """
+        if (len(inputs) != 1):
+            raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
         policy_input = SupertrackUtils.process_raw_observations_to_policy_input(inputs[0])
         encoding = self.network_body(policy_input)
         action, log_probs, entropies = self.action_model(encoding, None) 

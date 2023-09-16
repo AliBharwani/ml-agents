@@ -4,8 +4,9 @@ from enum import Enum
 from typing import Dict, List, Tuple, cast
 import os
 import functools
-from mlagents.torch_utils import torch
 from mlagents.trainers import quat, supertrack
+import pdb
+from mlagents.torch_utils import torch, nn, default_device
 
 from mlagents.trainers.buffer import AgentBuffer, AgentBufferField, BufferKey, ObservationKeyPrefix
 from mlagents.trainers.torch_entities.utils import ModelUtils
@@ -39,7 +40,7 @@ from mlagents.trainers.trainer.rl_trainer import RLTrainer
 TOTAL_OBS_LEN = 720
 CHAR_STATE_LEN = 259
 NUM_BONES = 17
-NUM_OUTPUT_BONES = NUM_BONES - 1
+NUM_T_BONES = 16 # Number of bones that have PD Motors (T = targets)
 ENTRIES_PER_BONE = 13
 POLICY_INPUT_LEN = 518
 
@@ -78,9 +79,10 @@ class CharState():
     up_dir : np.ndarray
     # rotations_two_axis_form: np.ndarray
 
-    def to_tensors(self):
+    @functools.cached_property
+    def as_tensors(self):
         # add a dimension to up_dir to make it a 1x3 tensor, so that we can use similar logic 
-        return torch.tensor(self.positions), torch.tensor(self.rotations), torch.tensor(self.velocities), torch.tensor(self.rot_velocities), torch.tensor(self.heights), torch.tensor(self.up_dir)#[None, :]
+        return torch.tensor(self.positions, dtype=torch.float32), torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.velocities, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32), torch.tensor(self.heights, dtype=torch.float32), torch.tensor(self.up_dir, dtype=torch.float32)#[None, :]
 
 @dataclass
 class PDTargets():
@@ -89,8 +91,8 @@ class PDTargets():
     # rotations_two_axis_form: np.ndarray
 
     @functools.cached_property
-    def to_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]: 
-        return torch.tensor(self.rotations), torch.tensor(self.rot_velocities)
+    def as_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]: 
+        return torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32)
 
 @dataclass
 class SuperTrackDataField():
@@ -163,6 +165,8 @@ class SupertrackUtils:
             pre_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx)
             # Extract post_targets
             post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx)
+            if idx != TOTAL_OBS_LEN:
+                raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
             supertrack_data.append(
                 SuperTrackDataField(
                 sim_char_state=sim_char_state, 
@@ -184,4 +188,34 @@ class SupertrackUtils:
         
         next_state = SuperTrackDataField()
         return next_state
+    
+    # @staticmethod
+    # def normalize_quat(q: torch.Tensor) -> torch.Tensor:
+    #     return q / torch.norm(q, dim=-1, keepdim=True)
+
+    @staticmethod 
+    def normalize_quat(quaternions, epsilon=1e-6):
+        """
+        Replace quaternions with L2 norm close to zero with the identity quaternion.
+
+        Args:
+            quaternions: Input quaternions as a tensor of shape (..., 4).
+            epsilon: Threshold to determine if L2 norm is close to zero.
+
+        Returns:
+            Quaternions with small L2 norm replaced by the identity quaternion.
+        """
+        # Compute the L2 norm squared for each quaternion
+        norm_squared = (quaternions ** 2).sum(dim=-1)
+        
+        # Create a mask for quaternions with L2 norm close to zero
+        mask = norm_squared < epsilon
+        
+        # Create a tensor of identity quaternions
+        identity_quaternion = torch.tensor([1.0, 0.0, 0.0, 0.0], device=default_device())
+        
+        # Use torch.where to replace the quaternions with identity
+        result = torch.where(mask[..., None], identity_quaternion, quaternions)
+        
+        return result / torch.norm(result, dim=-1, keepdim=True)
         
