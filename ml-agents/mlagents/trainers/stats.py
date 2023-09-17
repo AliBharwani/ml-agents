@@ -192,9 +192,9 @@ class ConsoleWriter(StatsWriter):
             if self.self_play and "Self-play/ELO" in values:
                 elo_stats = values["Self-play/ELO"]
                 log_info.append(f"ELO: {elo_stats.mean:0.3f}")
-        else:
-            log_info.append("No episode was completed since last summary")
-            log_info.append(is_training)
+        # else:
+        #     log_info.append("No episode was completed since last summary")
+        #     log_info.append(is_training)
         logger.info(". ".join(log_info) + ".")
 
     def add_property(
@@ -247,6 +247,13 @@ class TensorboardWriter(StatsWriter):
                 self.summary_writers[category].add_histogram(
                     f"{key}_hist", np.array(value.full_dist), step
                 )
+            self.summary_writers[category].flush()
+        if "Environment/Interrupted" in values:
+            num_interrupted = values["Environment/Interrupted"].aggregated_value
+            num_selfterminated = values["Environment/SelfTerminated"].aggregated_value
+            self.summary_writers[category].add_scalar(
+                "Environment/Percent Interrupted", num_interrupted / (num_interrupted + num_selfterminated), step
+            )
             self.summary_writers[category].flush()
 
     def _maybe_create_summary_writer(self, category: str) -> None:

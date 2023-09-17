@@ -82,7 +82,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # return [tensor.reshape(B, -1) for tensor in return_tensors]
         # for tensor, name in return_tensors:
         #     print(f"{name} dtype: {tensor.dtype}")
-        # pdb.set_trace()
         return [tensor.reshape(B, -1) for tensor, name in return_tensors]
 
 
@@ -147,7 +146,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             accel = torch.cat((zeros_like_accel, accel), dim=1)
             rot_accel = torch.cat((zeros_like_accel, rot_accel), dim=1)
             # Integrate
-            # pdb.set_trace()
             cur_pos = cur_pos + self.dtime*cur_vels
             cur_rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(cur_rot_vels*self.dtime) , cur_rots)
             if torch.isnan(cur_rots).any():
@@ -198,14 +196,13 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         wa = wang*torch.mean(torch.sum(torch.abs(rvel1-rvel2), dim = -1))
         quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
         mat_diffs = pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)
-        # NVM: Use cos_angle=True to avoid NaNs, esp in backwards pass. This is because acos(x) is not differentiable at |x| > 1
         wr = wrot*torch.mean(torch.sum(torch.abs(pyt.so3_rotation_angle(mat_diffs))))
         loss = wp + wv + wa + wr
         return loss, wp, wv, wa, wr
 
         
     @timed
-    def update_policy(self, batch: AgentBuffer, window_size: int) -> Dict[str, float]: 
+    def update_policy(self, batch: AgentBuffer, batch_size: int, window_size: int) -> Dict[str, float]: 
         pass
     
     def get_modules(self):

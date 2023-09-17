@@ -3,6 +3,7 @@
 # and implemented in https://github.com/hill-a/stable-baselines
 
 from collections import defaultdict
+from email import policy
 from typing import Dict, cast
 import os
 
@@ -157,6 +158,16 @@ class SuperTrackTrainer(RLTrainer):
                 self.update_buffer.num_experiences
             )
         )
+    
+    def _has_enough_data_to_train(self) -> bool:
+        """
+        Returns whether or not there is enough data in the buffer to train
+        :return: A boolean corresponding to whether or not there is enough data to train
+        """
+        return (
+            self.update_buffer.num_experiences - max(self.effective_wm_window, self.effective_policy_window)
+              >= self.hyperparameters.batch_size * max(self.effective_wm_window, self.effective_policy_window)
+        )
 
     def _is_ready_update(self) -> bool:
         """
@@ -164,7 +175,7 @@ class SuperTrackTrainer(RLTrainer):
         :return: A boolean corresponding to whether or not _update_policy() can be run
         """
         return (
-            self.update_buffer.num_experiences  >= self.hyperparameters.batch_size  * max(self.effective_wm_window, self.effective_policy_window)
+            self._has_enough_data_to_train()
             and self._step >= self.hyperparameters.buffer_init_steps
         )
 
@@ -208,28 +219,28 @@ class SuperTrackTrainer(RLTrainer):
         ) / self.update_steps > self.steps_per_update:
             logger.debug(f"Updating SuperTrack policy at step {self._step}")
             buffer = self.update_buffer
-            print(f"Updating SuperTrack policy at step {self._step}, buffer len: {self.update_buffer.num_experiences}")
-            if self.update_buffer.num_experiences >= self.hyperparameters.batch_size  * self.effective_wm_window:
+            if self._has_enough_data_to_train():
                 world_model_minibatch = buffer.supertrack_sample_mini_batch(
                     self.hyperparameters.batch_size,
                     self.wm_window,
                 )
-                print("Fetched world model minibatch")
+                policy_minibatch = buffer.supertrack_sample_mini_batch(self.hyperparameters.batch_size, self.policy_window)
+
                 update_stats = self.optimizer.update_world_model(world_model_minibatch, self.hyperparameters.batch_size, self.wm_window)
+                # update_stats.update(self.optimizer.update_policy(policy_minibatch, self.hyperparameters.batch_size, self.policy_window))
                 for stat_name, value in update_stats.items():
                     batch_update_stats[stat_name].append(value)
 
-                self.update_steps += 1
-                print(f"Updating policy, update steps: {self.update_steps}")
-
-
                 for stat, stat_list in batch_update_stats.items():
                     self._stats_reporter.add_stat(stat, np.mean(stat_list))
+                self.update_steps += 1
                 has_updated = True
+            else:
+                raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {self.hyperparameters.batch_size  * max(self.effective_wm_window, self.effective_policy_window)} to update")
 
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
-        if self.update_buffer.num_experiences > self.hyperparameters.buffer_size * max(self.effective_wm_window, self.effective_policy_window):
+        if self._has_enough_data_to_train():
             self.update_buffer.truncate(
                 int(self.hyperparameters.buffer_size * BUFFER_TRUNCATE_PERCENT)
             )
@@ -242,8 +253,6 @@ class SuperTrackTrainer(RLTrainer):
         Takes a trajectory and processes it, putting it into the replay buffer.
         """
         super()._process_trajectory(trajectory)
-        agent_id = trajectory.agent_id  # All the agents should have the same ID
-        print(f"Num exp in trajectory being processed:  {len(trajectory.steps)}")
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
 
         # CREATE SUPERTRACK DATA FOR EACH POINT IN THE TRAJECTORY 
@@ -255,10 +264,6 @@ class SuperTrackTrainer(RLTrainer):
             # self.optimizer.world_model.update_normalization(agent_buffer_trajectory)
 
         self._append_to_update_buffer(agent_buffer_trajectory)
-
-        if trajectory.done_reached:
-            self._update_end_episode_stats(agent_id, self.optimizer)
-        print("Done processing trajectory")
 
     def create_optimizer(self) -> TorchOptimizer:
         return TorchSuperTrackOptimizer(  # type: ignore

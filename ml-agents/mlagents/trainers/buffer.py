@@ -2,6 +2,7 @@ from collections import defaultdict
 from collections.abc import MutableMapping
 import enum
 import itertools
+import pdb
 from typing import BinaryIO, DefaultDict, List, Tuple, Union, Optional
 
 import numpy as np
@@ -214,7 +215,7 @@ class AgentBufferField(list):
         self[:] = []
 
     def padded_to_batch(
-        self, pad_value: np.float = 0, dtype: np.dtype = np.float32
+        self, pad_value: np.float32 = 0, dtype: np.dtype = np.float32
     ) -> Union[np.ndarray, List[np.ndarray]]:
         """
         Converts this AgentBufferField (which is a List[BufferEntry]) into a numpy array
@@ -458,7 +459,9 @@ class AgentBuffer(MutableMapping):
         window_size = raw_window_size + 1
         buff_len = self.num_experiences
         start_idxes = (
-            np.random.randint(0, (buff_len // window_size) - window_size, size=batch_size) * window_size
+            # Subtract window_size from buff_len because we want to make sure there are enough entries for a full window
+            # after the last start idx 
+            np.random.randint(0, (buff_len - window_size) // window_size , size=batch_size) * window_size
         )
         for i in start_idxes:
             # make sure there are enough entries after this

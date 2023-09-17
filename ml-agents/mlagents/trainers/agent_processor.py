@@ -307,6 +307,8 @@ class AgentProcessor:
                     "Environment/Episode Length",
                     self._episode_steps.get(global_agent_id, 0),
                 )
+                episode_end_type_str = "Interrupted" if interrupted else "SelfTerminated"
+                self._stats_reporter.add_stat(f"Environment/{episode_end_type_str}", 1, StatsAggregationMethod.SUM)
                 self._clean_agent_data(global_agent_id)
 
     def _clean_agent_data(self, global_id: GlobalAgentId) -> None:
