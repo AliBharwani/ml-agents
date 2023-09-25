@@ -1,10 +1,10 @@
 from typing import Tuple, Optional, Union
 
 from mlagents.trainers.torch_entities.layers import linear_layer, Initialization, Swish
-
+import traceback
 from mlagents.torch_utils import torch, nn
 from mlagents.trainers.torch_entities.model_serialization import exporting_to_onnx
-
+import pdb
 
 class Normalizer(nn.Module):
     def __init__(self, vec_obs_size: int):
@@ -13,13 +13,18 @@ class Normalizer(nn.Module):
         self.register_buffer("running_mean", torch.zeros(vec_obs_size))
         self.register_buffer("running_variance", torch.ones(vec_obs_size))
 
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        self.normalization_steps = torch.clamp(self.normalization_steps, min=1)
+        # print(f"self.normalization_steps: {self.normalization_steps}")
         normalized_state = torch.clamp(
             (inputs - self.running_mean)
             / torch.sqrt(self.running_variance / self.normalization_steps),
             -5,
             5,
         )
+        if torch.isnan(normalized_state).any():
+            pdb.set_trace()
         return normalized_state
 
     def update(self, vector_input: torch.Tensor) -> None:

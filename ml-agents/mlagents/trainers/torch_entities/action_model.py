@@ -225,7 +225,8 @@ class ActionModel(nn.Module):
         """
         dists = self._get_dists(inputs, masks)
         actions = self._sample_action(dists)
+        means = dists.continuous.deterministic_sample() if dists.continuous is not None else None
         log_probs, entropies = self._get_probs_and_entropy(actions, dists)
         # Use the sum of entropy across actions, not the mean
         entropy_sum = torch.sum(entropies, dim=1)
-        return (actions, log_probs, entropy_sum)
+        return (actions, log_probs, entropy_sum, means)

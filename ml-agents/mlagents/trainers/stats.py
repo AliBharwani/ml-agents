@@ -248,11 +248,15 @@ class TensorboardWriter(StatsWriter):
                     f"{key}_hist", np.array(value.full_dist), step
                 )
             self.summary_writers[category].flush()
-        if "Environment/Interrupted" in values:
-            num_interrupted = values["Environment/Interrupted"].aggregated_value
-            num_selfterminated = values["Environment/SelfTerminated"].aggregated_value
+        if "Environment/Interrupted" or "Environment/SelfTerminated" in values:
+            # The problem is either of these can be 0, so neither is safe to divide with directly
+            num_interrupted = values["Environment/Interrupted"].aggregated_value if "Environment/Interrupted" in values else 0
+            num_selfterminated = values["Environment/SelfTerminated"].aggregated_value if "Environment/SelfTerminated" in values else 0
+            percent = 0
+            if num_selfterminated != 0 or num_interrupted != 0:
+                percent = num_interrupted / (num_interrupted + num_selfterminated) * 100
             self.summary_writers[category].add_scalar(
-                "Environment/Percent Interrupted", num_interrupted / (num_interrupted + num_selfterminated), step
+                "Environment/Percent Interrupted", percent, step
             )
             self.summary_writers[category].flush()
 

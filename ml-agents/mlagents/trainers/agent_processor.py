@@ -253,6 +253,10 @@ class AgentProcessor:
             except KeyError:
                 log_probs_tuple = LogProbsTuple.empty_log_probs()
 
+            supertrack_data = None
+            if "supertrack_data" in stored_take_action_outputs:
+                supertrack_data = stored_take_action_outputs["supertrack_data"]
+
             action_mask = stored_decision_step.action_mask
             prev_action = self.policy.retrieve_previous_action([global_agent_id])[0, :]
 
@@ -274,6 +278,7 @@ class AgentProcessor:
                 memory=memory,
                 group_status=group_statuses,
                 group_reward=step.group_reward,
+                supertrack_data=supertrack_data,
             )
             # Add the value outputs if needed
             self._experience_buffers[global_agent_id].append(experience)

@@ -4,38 +4,15 @@ from enum import Enum
 from typing import Dict, List, Tuple, cast
 import os
 import functools
-from mlagents.trainers import quat, supertrack
 import pdb
 from mlagents.torch_utils import torch, nn, default_device
 
 from mlagents.trainers.buffer import AgentBuffer, AgentBufferField, BufferKey, ObservationKeyPrefix
-from mlagents.trainers.torch_entities.utils import ModelUtils
 
-from mlagents.trainers.trajectory import ObsUtil
-import attr
 
 import pytorch3d.transforms as pyt
-# from mlagents.trainers.trajectory import Trajectory
-
-from mlagents.trainers.trajectory import Trajectory
-
-
-from mlagents.trainers.torch_entities.networks import SimpleActor
-
-from mlagents_envs.base_env import BehaviorSpec
-
-from mlagents.trainers.policy.torch_policy import TorchPolicy
 
 import numpy as np
-from mlagents.trainers.policy.checkpoint_manager import ModelCheckpoint
-
-from mlagents_envs.logging_util import get_logger
-from mlagents_envs.timers import timed
-from mlagents.trainers.buffer import RewardSignalUtil
-from mlagents.trainers.policy import Policy
-from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
-from mlagents.trainers.trainer.rl_trainer import RLTrainer
-
 
 TOTAL_OBS_LEN = 720
 CHAR_STATE_LEN = 259
@@ -71,28 +48,43 @@ class Bone(Enum):
 
 @dataclass
 class CharState():
-    positions : np.ndarray
-    rotations : np.ndarray
-    velocities : np.ndarray
-    rot_velocities : np.ndarray
-    heights : np.ndarray
-    up_dir : np.ndarray
+    # positions : np.ndarray
+    # rotations : np.ndarray
+    # velocities : np.ndarray
+    # rot_velocities : np.ndarray
+    # heights : np.ndarray
+    # up_dir : np.ndarray
+    positions: torch.Tensor
+    rotations: torch.Tensor
+    velocities: torch.Tensor
+    rot_velocities: torch.Tensor
+    heights: torch.Tensor
+    up_dir: torch.Tensor
     # rotations_two_axis_form: np.ndarray
-
     @functools.cached_property
     def as_tensors(self):
-        # add a dimension to up_dir to make it a 1x3 tensor, so that we can use similar logic 
-        return torch.tensor(self.positions, dtype=torch.float32), torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.velocities, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32), torch.tensor(self.heights, dtype=torch.float32), torch.tensor(self.up_dir, dtype=torch.float32)#[None, :]
+        return self.positions, self.rotations, self.velocities, self.rot_velocities, self.heights, self.up_dir
+
+    # @functools.cached_property
+    # def as_tensors(self):
+    #     # add a dimension to up_dir to make it a 1x3 tensor, so that we can use similar logic 
+    #     return torch.tensor(self.positions, dtype=torch.float32), torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.velocities, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32), torch.tensor(self.heights, dtype=torch.float32), torch.tensor(self.up_dir, dtype=torch.float32)#[None, :]
 
 @dataclass
 class PDTargets():
-    rotations : np.ndarray
-    rot_velocities : np.ndarray
+    # rotations : np.ndarray
+    # rot_velocities : np.ndarray
+    rotations : torch.Tensor
+    rot_velocities : torch.Tensor
     # rotations_two_axis_form: np.ndarray
 
     @functools.cached_property
     def as_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]: 
-        return torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32)
+        return self.rotations, self.rot_velocities
+
+    # @functools.cached_property
+    # def as_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]: 
+    #     return torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32)
 
 @dataclass
 class SuperTrackDataField():
@@ -105,16 +97,37 @@ class SuperTrackDataField():
 class SupertrackUtils:
 
     @staticmethod
+    def convert_actions_to_quat(actions: torch.Tensor, # shape: (B, num_bones, 3)
+                                alpha: float = 120
+                               ) -> torch.Tensor:
+        """
+        The PD offsets, represented by vectors, are converted to rotations 
+        via the exponential map as described in Grassia (1998). These rotations
+        are then multiplied by the joint rotations of the kinematic character
+        to derive the final PD targets as t = exp(𝛼/2 * o) ⊗ k_t. Here, 𝛼 
+        serves as a scaling factor for the offsets.
+        """
+        B, num_bones, _ = actions.shape
+        actions = actions.reshape(-1, 3)
+
+        return pyt.matrix_to_quaternion(pyt.so3_exp_map(actions * (alpha/2))).reshape(B, num_bones, 4)
+        
+    @staticmethod
     def process_raw_observations_to_policy_input(inputs : torch.Tensor) -> torch.Tensor:
         return inputs[:, :POLICY_INPUT_LEN]
 
     @staticmethod
-    def extract_char_state(obs: np.ndarray, idx: int) -> (CharState, int):
-        positions: np.ndarray = np.zeros((NUM_BONES, 3))
-        rotations: np.ndarray = np.zeros((NUM_BONES, 4))
-        velocities: np.ndarray = np.zeros((NUM_BONES, 3))
-        rot_velocities: np.ndarray = np.zeros((NUM_BONES, 3))
-        heights: np.ndarray = np.zeros(NUM_BONES)
+    def extract_char_state(obs: torch.Tensor, idx: int) -> (CharState, int):
+        # positions: np.ndarray = np.zeros((NUM_BONES, 3))
+        # rotations: np.ndarray = np.zeros((NUM_BONES, 4))
+        # velocities: np.ndarray = np.zeros((NUM_BONES, 3))
+        # rot_velocities: np.ndarray = np.zeros((NUM_BONES, 3))
+        # heights: np.ndarray = np.zeros(NUM_BONES)
+        positions: torch.Tensor = torch.zeros((NUM_BONES, 3))
+        rotations: torch.Tensor = torch.zeros((NUM_BONES, 4))
+        velocities: torch.Tensor = torch.zeros((NUM_BONES, 3))
+        rot_velocities: torch.Tensor = torch.zeros((NUM_BONES, 3))
+        heights: torch.Tensor = torch.zeros(NUM_BONES)
         # rotations_two_axis_form: np.ndarray = np.zeros((NUM_BONES, 6))
         for i in range(NUM_BONES):
             positions[i] = obs[idx:idx+3]
@@ -138,8 +151,10 @@ class SupertrackUtils:
 
     @staticmethod
     def extract_pd_targets(obs, idx) -> (PDTargets, int):
-        rotations = np.zeros((NUM_BONES, 4))
-        rot_velocities = np.zeros((NUM_BONES, 3))
+        # rotations = np.zeros((NUM_BONES, 4))
+        # rot_velocities = np.zeros((NUM_BONES, 3))
+        rotations = torch.zeros((NUM_BONES, 4))
+        rot_velocities = torch.zeros((NUM_BONES, 3))
         # rotations_two_axis_form: List[np.ndarray] = np.zeros((NUM_BONES, 6))
         for i in range(NUM_BONES):
             rotations[i] = obs[idx:idx+4]
@@ -147,9 +162,30 @@ class SupertrackUtils:
             rot_velocities[i] = obs[idx:idx+3]
             idx += 3
         return PDTargets(rotations, rot_velocities), idx 
+    
+    @staticmethod
+    def parse_supertrack_data_field(inputs: List[torch.Tensor]) -> AgentBuffer:
+        if len(inputs) != 1:
+            raise Exception(f"SupertrackUtils.add_supertrack_data_field expected inputs to be of len 1, got {len(inputs)}")
+        obs = inputs[0]
+        idx = 0
+        sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx)
+        # Extract kin char state
+        kin_char_state, idx = SupertrackUtils.extract_char_state(obs, idx)
+        # Extract pre_targets
+        pre_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx)
+        # Extract post_targets
+        post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx)
+        if idx != TOTAL_OBS_LEN:
+            raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
+        return SuperTrackDataField(
+            sim_char_state=sim_char_state, 
+            kin_char_state=kin_char_state,
+            pre_targets=pre_targets,
+            post_targets=post_targets)
 
     @staticmethod
-    def add_supertrack_data_field(agent_buffer_trajectory: AgentBuffer) -> AgentBuffer:
+    def add_supertrack_data_field_OLD(agent_buffer_trajectory: AgentBuffer) -> AgentBuffer:
         supertrack_data = AgentBufferField()
         for i in range(agent_buffer_trajectory.num_experiences):
             obs = agent_buffer_trajectory[(ObservationKeyPrefix.OBSERVATION, 0)][i]

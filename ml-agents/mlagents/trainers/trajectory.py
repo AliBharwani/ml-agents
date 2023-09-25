@@ -7,6 +7,7 @@ from mlagents.trainers.buffer import (
     AgentBufferKey,
     BufferKey,
 )
+from mlagents.trainers.supertrack.supertrack_utils import SuperTrackDataField
 from mlagents_envs.base_env import ActionTuple
 from mlagents.trainers.torch_entities.action_log_probs import LogProbsTuple
 
@@ -41,6 +42,7 @@ class AgentExperience(NamedTuple):
     memory: np.ndarray
     group_status: List[AgentStatus]
     group_reward: float
+    supertrack_data: SuperTrackDataField
 
 
 class ObsUtil:
@@ -160,6 +162,7 @@ class Trajectory(NamedTuple):
             agent_buffer_trajectory[BufferKey.CONTINUOUS_ACTION].append(
                 exp.action.continuous
             )
+            agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA].append(exp.supertrack_data)
             agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ].append(step)
             agent_buffer_trajectory[BufferKey.TRAJ_LEN].append(
                 len(self.steps)

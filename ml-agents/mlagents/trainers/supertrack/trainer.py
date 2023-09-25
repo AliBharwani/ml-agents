@@ -95,6 +95,7 @@ class SuperTrackTrainer(RLTrainer):
         self.policy_window = self.trainer_settings.policy_network_settings.training_window
         self.effective_wm_window = self.wm_window + 1 # we include an extra piece of dating during training to simplify code
         self.effective_policy_window = self.policy_window + 1 
+        self.batch_size = self.hyperparameters.batch_size
 
 
 ### FROM OFFPOLICYTRAINER LEVEL
@@ -166,7 +167,7 @@ class SuperTrackTrainer(RLTrainer):
         """
         return (
             self.update_buffer.num_experiences - max(self.effective_wm_window, self.effective_policy_window)
-              >= self.hyperparameters.batch_size * max(self.effective_wm_window, self.effective_policy_window)
+              >= self.batch_size * max(self.effective_wm_window, self.effective_policy_window)
         )
 
     def _is_ready_update(self) -> bool:
@@ -220,13 +221,10 @@ class SuperTrackTrainer(RLTrainer):
             logger.debug(f"Updating SuperTrack policy at step {self._step}")
             buffer = self.update_buffer
             if self._has_enough_data_to_train():
-                world_model_minibatch = buffer.supertrack_sample_mini_batch(
-                    self.hyperparameters.batch_size,
-                    self.wm_window,
-                )
-                policy_minibatch = buffer.supertrack_sample_mini_batch(self.hyperparameters.batch_size, self.policy_window)
+                world_model_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size,self.wm_window)
+                policy_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size, self.policy_window)
 
-                update_stats = self.optimizer.update_world_model(world_model_minibatch, self.hyperparameters.batch_size, self.wm_window)
+                update_stats = self.optimizer.update_world_model(world_model_minibatch, self.batch_size, self.wm_window)
                 # update_stats.update(self.optimizer.update_policy(policy_minibatch, self.hyperparameters.batch_size, self.policy_window))
                 for stat_name, value in update_stats.items():
                     batch_update_stats[stat_name].append(value)
@@ -256,11 +254,11 @@ class SuperTrackTrainer(RLTrainer):
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
 
         # CREATE SUPERTRACK DATA FOR EACH POINT IN THE TRAJECTORY 
-        SupertrackUtils.add_supertrack_data_field(agent_buffer_trajectory)
+        # SupertrackUtils.add_supertrack_data_field(agent_buffer_trajectory)
 
         # Update the normalization
-        if self.is_training:
-            self.policy.actor.update_normalization(agent_buffer_trajectory)
+        # if self.is_training:
+            # self.policy.actor.update_normalization(agent_buffer_trajectory)
             # self.optimizer.world_model.update_normalization(agent_buffer_trajectory)
 
         self._append_to_update_buffer(agent_buffer_trajectory)

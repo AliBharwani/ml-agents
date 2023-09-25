@@ -637,7 +637,7 @@ class SimpleActor(nn.Module, Actor):
         encoding, memories = self.network_body(
             inputs, memories=memories, sequence_length=sequence_length
         )
-        action, log_probs, entropies = self.action_model(encoding, masks)
+        action, log_probs, entropies, _means = self.action_model(encoding, masks)
         run_out = {}
         # This is the clipped action which is not saved to the buffer
         # but is exclusively sent to the environment.
