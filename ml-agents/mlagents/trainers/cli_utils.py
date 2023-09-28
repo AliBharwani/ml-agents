@@ -298,6 +298,12 @@ def _create_parser() -> argparse.ArgumentParser:
         action=DetectDefault,
         help='Settings for the default torch.device used in training, for example, "cpu", "cuda", or "cuda:0"',
     )
+    torch_conf.add_argument(
+        "--anomaly",
+        default=False,
+        action=DetectDefaultStoreTrue,
+        help="Whether to enable anomaly detection for the Torch backend. This is useful for debugging.",
+    )
     return argparser
 
 

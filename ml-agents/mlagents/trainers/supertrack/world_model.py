@@ -42,8 +42,12 @@ class WorldModelNetwork(nn.Module):
         self.input_size = network_settings.input_size
         if (self.input_size == -1):
             raise Exception("SuperTrack World Model created without input_size designated in yaml file")
-        # MY TODO: Replace with 1DBatchNorm layer from pytorch
-        self._obs_encoder : nn.Module = VectorInput(self.input_size, self.normalize)
+
+        # Used to normalize inputs
+        if self.normalize:
+            self._obs_encoder : nn.Module = nn.LayerNorm(self.input_size)
+        else:
+            self._obs_encoder : nn.Module = VectorInput(self.input_size, False)
         self._body_encoder = LinearEncoder(
             self.network_settings.input_size,
             self.network_settings.num_layers - 1,
@@ -58,7 +62,3 @@ class WorldModelNetwork(nn.Module):
         # Clip the outputs to the range [-100, 100]
         # result = torch.clamp(result, min=-100, max=100)
         return result
-    
-    def update_normalization(self, buffer: AgentBuffer) -> None:
-        # self._obs_encoder.update_normalization(buffer)
-        pass

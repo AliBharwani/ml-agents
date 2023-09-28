@@ -40,8 +40,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
     def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
         super().__init__(policy, trainer_settings)
-        print("Set anomaly detection")
-        torch.autograd.set_detect_anomaly(True)
         self._world_model = WorldModelNetwork(
             trainer_settings.world_model_network_settings
         )
@@ -55,6 +53,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self.policy_optimizer = torch.optim.Adam(policy.actor.parameters(), lr=self.policy_lr)
+        self._world_model.train()
+        self.policy.actor.train() 
 
     @timed
     def update_world_model(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
@@ -83,7 +83,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         loss = 0
         wpos_loss = wvel_loss = wang_loss = wrot_loss = 0
-
         for i in range(raw_window_size):
             cur_heights = heights[:, i, ...]
             cur_up_dir = up_dir[:, i, ...]
@@ -199,6 +198,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
         hn = lambda x : torch.isnan(x).any()
         loss = lpos = lvel = lrot = lang = lreg = lsreg = 0
+        self.policy.actor.train()
         self._world_model.eval()
         for param in self._world_model.parameters():
             param.requires_grad = False
@@ -298,6 +298,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     def get_modules(self):
         modules = {
             "Optimizer:WorldModel": self._world_model,
+            "Optimizer:world_model_optimzer": self.world_model_optimzer,
+            "Optimizer:policy_optimizer": self.policy_optimizer,
          }
         return modules
     
@@ -317,7 +319,10 @@ class PolicyNetworkBody(nn.Module):
             raise Exception("SuperTrack Policy Network created without input_size designated in yaml file")
         
         # Used to normalize inputs
-        self._obs_encoder : nn.Module = VectorInput(self.input_size, self.normalize)
+        if self.normalize:
+            self._obs_encoder : nn.Module = nn.LayerNorm(self.input_size)
+        else:
+            self._obs_encoder : nn.Module = VectorInput(self.input_size, False)
         self._body_encoder = LinearEncoder(
             self.network_settings.input_size,
             self.network_settings.num_layers,
@@ -326,16 +331,10 @@ class PolicyNetworkBody(nn.Module):
     @property
     def memory_size(self) -> int:
         return 0
-        
-    def update_normalization(self, buffer: AgentBuffer) -> None:
-        # self._obs_encoder.update_normalization(buffer.input)
-        pass
 
     def forward(self, inputs: torch.Tensor):
-        # if len(inputs) != 1:
-        #     raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
-        encoded_self = self._obs_encoder(inputs)
-        encoding = self._body_encoder(encoded_self)
+        normalized = self._obs_encoder(inputs)
+        encoding = self._body_encoder(normalized)
         return encoding
 
 class SuperTrackPolicyNetwork(nn.Module, Actor):
@@ -372,10 +371,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             deterministic=network_settings.deterministic,
         )
 
-    
     def update_normalization(self, buffer: AgentBuffer) -> None:
-        self.network_body.update_normalization(buffer)
-
+        pass # Not needed because we use batchnorm
 
     @property
     def memory_size(self) -> int:

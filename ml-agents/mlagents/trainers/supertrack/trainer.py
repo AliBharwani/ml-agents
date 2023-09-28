@@ -254,15 +254,6 @@ class SuperTrackTrainer(RLTrainer):
         """
         super()._process_trajectory(trajectory)
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-
-        # CREATE SUPERTRACK DATA FOR EACH POINT IN THE TRAJECTORY 
-        # SupertrackUtils.add_supertrack_data_field(agent_buffer_trajectory)
-
-        # Update the normalization
-        if self.is_training:
-            self.policy.actor.update_normalization(agent_buffer_trajectory)
-            self.optimizer._world_model.update_normalization(agent_buffer_trajectory)
-
         self._append_to_update_buffer(agent_buffer_trajectory)
 
     def create_optimizer(self) -> TorchOptimizer:

@@ -856,6 +856,7 @@ class EngineSettings:
 @attr.s(auto_attribs=True)
 class TorchSettings:
     device: Optional[str] = parser.get_default("device")
+    anomaly: Optional[bool] = parser.get_default("anomaly")
 
 
 @attr.s(auto_attribs=True)

@@ -169,6 +169,7 @@ class ModelSerializer:
         logger.debug(f"Converting to {onnx_output_path}")
 
         with exporting_to_onnx():
+            self.policy.actor.eval()
             torch.onnx.export(
                 self.policy.actor,
                 self.dummy_input,
