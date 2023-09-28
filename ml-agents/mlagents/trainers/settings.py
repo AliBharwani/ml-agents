@@ -144,6 +144,7 @@ class NetworkSettings:
     input_size : int = -1
     output_size : int = -1
     normalize: bool = False
+    learning_rate: float = 3.0e-4
     hidden_units: int = 128
     training_window: int = 32
     activation_function = ActivationType.SWISH

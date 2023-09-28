@@ -8,7 +8,7 @@ import pdb
 from mlagents.torch_utils import torch, nn, default_device
 import pytorch3d.transforms as pyt
 from mlagents.trainers.buffer import AgentBuffer, BufferKey
-from mlagents.trainers.supertrack.supertrack_utils import  SupertrackUtils
+from mlagents.trainers.supertrack.supertrack_utils import  POLICY_INPUT_LEN, SupertrackUtils
 from mlagents.trainers.supertrack.world_model import WorldModelNetwork
 from mlagents.trainers.torch_entities.action_model import ActionModel
 from mlagents.trainers.torch_entities.encoders import VectorInput
@@ -40,8 +40,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
     def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
         super().__init__(policy, trainer_settings)
-        # print("Set anomaly detection")
-        # torch.autograd.set_detect_anomaly(True)
+        print("Set anomaly detection")
+        torch.autograd.set_detect_anomaly(True)
         self._world_model = WorldModelNetwork(
             trainer_settings.world_model_network_settings
         )
@@ -51,34 +51,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             SuperTrackSettings, trainer_settings.hyperparameters
         )
         self.offset_scale = self.hyperparameters.offset_scale
-        self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.hyperparameters.learning_rate)
-
-    @timed
-    def local(self, 
-            cur_pos: torch.Tensor, # shape [batch_size, num_bones, 3]
-            cur_rots: torch.Tensor, # shape [batch_size, num_bones, 4]
-            cur_vels: torch.Tensor,   # shape [batch_size, num_bones, 3]
-            cur_rot_vels: torch.Tensor, # shape [batch_size, num_bones, 3]
-            cur_heights: torch.Tensor, # shape [batch_size, num_bones]
-            cur_up_dir: torch.Tensor): # shape [batch_size, 3]
-        
-        B = cur_pos.shape[0] # batch_size
-        root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
-        inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
-        local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_bones, 3]
-        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_bones, 4]
-        two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots)) # shape [batch_size, num_bones, 6]
-        local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_bones, 3]
-        local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_bones, 3]
-
-        # return_tensors = [local_pos, two_axis_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
-        return_tensors = [(local_pos, 'local_pos'), (two_axis_rots, 'two_axis_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
-        # Have to reshape instead of view because stride can be messed up in some cases
-        # return [tensor.reshape(B, -1) for tensor in return_tensors]
-        # for tensor, name in return_tensors:
-        #     print(f"{name} dtype: {tensor.dtype}")
-        return [tensor.reshape(B, -1) for tensor, name in return_tensors]
-
+        self.wm_lr = trainer_settings.world_model_network_settings.learning_rate
+        self.policy_lr = trainer_settings.policy_network_settings.learning_rate
+        self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
+        self.policy_optimizer = torch.optim.Adam(policy.actor.parameters(), lr=self.policy_lr)
 
     @timed
     def update_world_model(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
@@ -117,7 +93,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             # Take one step through world
             cur_pos, cur_rots, cur_vels, cur_rot_vels = self._integrate_through_world_model(cur_pos, cur_rots, cur_vels, cur_rot_vels, cur_heights, cur_up_dir, kin_rot_t[:, i, ...], kin_rvel_t[:, i, ...])
             # Update loss
-            loss, wp, wv, wrvel, wr, raw_losses = self.world_model_loss(cur_pos[:, 1:, :],
+            step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(cur_pos[:, 1:, :],
                                                         positions[:, i+1, 1:, :],
                                                         cur_rots[:, 1:, :],
                                                         rotations[:, i+1, 1:, :],
@@ -125,7 +101,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                         vels[:, i+1, 1:, :], 
                                                         cur_rot_vels[:, 1:, :], 
                                                         rot_vels[:, i+1, 1:, :])
-            loss += loss
+            loss += step_loss
             wpos_loss += raw_losses[0]
             wvel_loss += raw_losses[1]
             wang_loss += raw_losses[2]
@@ -134,7 +110,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                          'World Model/wvel_loss': wvel_loss.item(),
                          'World Model/wrvel_loss': wang_loss.item(),
                          'World Model/wrot_loss': wrot_loss.item(),
-                         'World Model/total loss': loss.item()}
+                         'World Model/total loss': loss.item(),
+                         'World Model/learning_rate': self.wm_lr}
 
         self.world_model_optimzer.zero_grad()
         loss.backward()
@@ -142,7 +119,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         return update_stats
 
     @timed
-    def world_model_loss(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
+    def char_state_loss(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
         # We want every loss to give roughly equal contribution
         # to do this, we make sure that, eg, w_pos_loss * pos_loss = total_loss / 4
         # w_pos_loss = total_loss/(pos_loss * 4)
@@ -178,7 +155,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         don't want to compute loss with root bone
         """
         batch_size = pos.shape[0]
-        input = torch.cat((*self.local(pos, rots, vels, rvels, heights, up_dir),
+        input = torch.cat((*SupertrackUtils.local(pos, rots, vels, rvels, heights, up_dir),
                             kin_rot_t.reshape(batch_size, -1),
                             kin_rvel_t.reshape(batch_size, -1)), dim = -1)
         output = self._world_model(input)
@@ -187,7 +164,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         root_rot = rots[:, 0:1, :]
         accel = pyt.quaternion_apply(root_rot, local_accel)
         rot_accel_q = pyt.quaternion_multiply(root_rot, pyt.axis_angle_to_quaternion(local_rot_accel))
-        rot_accel = pyt.quaternion_to_axis_angle(rot_accel_q)
+        rot_accel = pyt.quaternion_to_axis_angle(SupertrackUtils.normalize_quat(rot_accel_q))
         padding_for_root_bone = torch.zeros((batch_size, 1, 3))
         accel = torch.cat((padding_for_root_bone, accel), dim=1)
         rot_accel = torch.cat((padding_for_root_bone, rot_accel), dim=1)
@@ -220,19 +197,25 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
         # It's okay to use pre target vels because we're not predicting velocity targets right now
         pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
-
-        loss = lpos = lvel = lrot = lang = lhei = lup = lreg = lsreg = 0
+        hn = lambda x : torch.isnan(x).any()
+        loss = lpos = lvel = lrot = lang = lreg = lsreg = 0
         self._world_model.eval()
         for param in self._world_model.parameters():
             param.requires_grad = False
         for i in range(raw_window_size):
-            local_kin = self.local(k_pos[:, i, ...], k_rots[:, i, ...], k_vels[:, i, ...], k_rvels[:, i, ...], k_h[:, i, ...], k_up[:, i, ...])
-            local_sim = self.local(cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...])
+            local_kin = SupertrackUtils.local(k_pos[:, i, ...], k_rots[:, i, ...], k_vels[:, i, ...], k_rvels[:, i, ...], k_h[:, i, ...], k_up[:, i, ...])
+            # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
+            cur_spos[:, 0, :] = s_pos[:, i, 0, :]
+            cur_srots[:, 0, :] = s_rots[:, i , 0, :]
+            local_sim = SupertrackUtils.local(cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...])
             # Predict PD offsets
             input = torch.cat((*local_kin, *local_sim), dim=-1)
-            action, runout, _ = self.policy.get_action_and_stats(input)
+            if hn(input):
+                print(f"Input nan: {hn(input)}")
+                pdb.set_trace()
+            action, runout, _ = self.policy.actor.get_action_and_stats([input], inputs_already_formatted=True)
             means = runout['means']
-            output = action.reshape(batch_size, -1, 3)
+            output = action.continuous_tensor.reshape(batch_size, -1, 3)
             output = SupertrackUtils.convert_actions_to_quat(output, self.offset_scale)
             # Compute PD targets
             cur_kin_targets = pyt.quaternion_multiply(pre_target_rots[:, i, ...], output)
@@ -248,26 +231,49 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                 pre_target_vels[:, i, ...])
             # Compute losses
             """
-            The difference between this prediction and the target
+            The difference between this prediction [of simulated state] and the target
             kinematic states K is then computed in the local space, and the
             losses used to update the weights of the policy
             """
+            step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(cur_spos[:, 1:, :], 
+                                    k_pos[:, i+1, 1:, :],
+                                    cur_srots[:, 1:, :],
+                                    k_rots[:, i+1, 1:, :],
+                                    cur_svels[:, 1:, :], 
+                                    k_vels[:, i+1, 1:, :], 
+                                    cur_srvels[:, 1:, :], 
+                                    k_rvels[:, i+1, 1:, :])
+            loss += step_loss
+            lpos += raw_losses[0]
+            lvel += raw_losses[1]
+            lang += raw_losses[2]
+            lrot += raw_losses[3]
+            # Compute regularization losses
+            step_lreg = torch.norm(means, p=2 ,dim=-1).mean()
+            step_lsreg = torch.norm(means, p=1 ,dim=-1).mean()
+            # Weigh regularization losses to contribute 1/100th of the other losses
+            step_lreg /= 100
+            step_lsreg /= 100
+            lreg += step_lreg
+            lsreg += step_lsreg
+            
         update_stats = {"Policy/loss": loss.item(),
                         "Policy/pos_loss": lpos.item(),
                         "Policy/vel_loss": lvel.item(),
                         "Policy/rot_loss": lrot.item(),
                         "Policy/ang_loss": lang.item(),
-                        "Policy/height_loss": lhei.item(),
-                        "Policy/up_loss": lup.item(),
                         "Policy/reg_loss": lreg.item(),
-                        "Policy/sreg_loss": lsreg.item()}
-        self.policy_optim.zero_grad()
+                        "Policy/sreg_loss": lsreg.item(),
+                        "Policy/learning_rate": self.policy_lr}
+        self.policy_optimizer.zero_grad()
         loss.backward()
-        self.policy_optim.step()
+        self.policy_optimizer.step()
         self._world_model.train()
         for param in self._world_model.parameters():
             param.requires_grad = True
         return update_stats
+
+
     
     def _convert_to_usable_tensors(self, char_states_as_tensors: List[Tuple[torch.Tensor]],  batch_size: int, window_size: int):
         # Unholy python wizardry. We take the char_state_tensors in the form: [(pos1, rots1, vels1, ...) , (pos2, rots2, vels2, ...), ...]
@@ -413,6 +419,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         memories: Optional[torch.Tensor] = None,
         sequence_length: int = 1,
         deterministic=False,
+        inputs_already_formatted=False,
     ) -> Tuple[AgentAction, Dict[str, Any], torch.Tensor]:
         """
         Returns sampled actions.
@@ -426,11 +433,21 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         """
         if (len(inputs) != 1):
             raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
-        supertrack_data = SupertrackUtils.parse_supertrack_data_field(inputs[0])
         # pdb.set_trace()
-        policy_input = SupertrackUtils.process_raw_observations_to_policy_input(inputs[0])
+        supertrack_data = None
+        if inputs_already_formatted:
+            policy_input = inputs[0]
+        else:
+            supertrack_data = SupertrackUtils.parse_supertrack_data_field(inputs[0])
+            policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
+        if policy_input.shape[-1] != POLICY_INPUT_LEN:
+            raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
         encoding = self.network_body(policy_input)
         action, log_probs, entropies, means = self.action_model(encoding, None) 
+        hn = lambda x: torch.isnan(x).any()
+        if hn(policy_input) or hn(encoding) or hn(action.continuous_tensor):
+            print(f"Policy_input nan: {hn(policy_input)}, encoding nan: {hn(encoding)}, action nan: {hn(action.continuous_tensor)}")
+            pdb.set_trace()
         run_out = {}
         # This is the clipped action which is not saved to the buffer
         # but is exclusively sent to the environment.

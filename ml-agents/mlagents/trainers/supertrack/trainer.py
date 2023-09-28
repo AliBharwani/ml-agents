@@ -4,6 +4,7 @@
 
 from collections import defaultdict
 from email import policy
+from turtle import up
 from typing import Dict, cast
 import os
 
@@ -225,7 +226,7 @@ class SuperTrackTrainer(RLTrainer):
                 policy_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size, self.policy_window)
 
                 update_stats = self.optimizer.update_world_model(world_model_minibatch, self.batch_size, self.wm_window)
-                # update_stats.update(self.optimizer.update_policy(policy_minibatch, self.hyperparameters.batch_size, self.policy_window))
+                update_stats.update(self.optimizer.update_policy(policy_minibatch, self.hyperparameters.batch_size, self.policy_window))
                 for stat_name, value in update_stats.items():
                     batch_update_stats[stat_name].append(value)
 
@@ -235,7 +236,8 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
             else:
                 raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {self.hyperparameters.batch_size  * max(self.effective_wm_window, self.effective_policy_window)} to update")
-
+        if has_updated:
+            print(f"Update steps: {self.update_steps}")
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
         if self._has_enough_data_to_train():
@@ -257,9 +259,9 @@ class SuperTrackTrainer(RLTrainer):
         # SupertrackUtils.add_supertrack_data_field(agent_buffer_trajectory)
 
         # Update the normalization
-        # if self.is_training:
-            # self.policy.actor.update_normalization(agent_buffer_trajectory)
-            # self.optimizer.world_model.update_normalization(agent_buffer_trajectory)
+        if self.is_training:
+            self.policy.actor.update_normalization(agent_buffer_trajectory)
+            self.optimizer._world_model.update_normalization(agent_buffer_trajectory)
 
         self._append_to_update_buffer(agent_buffer_trajectory)
 

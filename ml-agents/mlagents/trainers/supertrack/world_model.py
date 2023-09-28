@@ -58,3 +58,7 @@ class WorldModelNetwork(nn.Module):
         # Clip the outputs to the range [-100, 100]
         # result = torch.clamp(result, min=-100, max=100)
         return result
+    
+    def update_normalization(self, buffer: AgentBuffer) -> None:
+        # self._obs_encoder.update_normalization(buffer)
+        pass

@@ -14,6 +14,8 @@ import pytorch3d.transforms as pyt
 
 import numpy as np
 
+from mlagents_envs.timers import timed
+
 TOTAL_OBS_LEN = 720
 CHAR_STATE_LEN = 259
 NUM_BONES = 17
@@ -113,8 +115,20 @@ class SupertrackUtils:
         return pyt.matrix_to_quaternion(pyt.so3_exp_map(actions * (alpha/2))).reshape(B, num_bones, 4)
         
     @staticmethod
-    def process_raw_observations_to_policy_input(inputs : torch.Tensor) -> torch.Tensor:
-        return inputs[:, :POLICY_INPUT_LEN]
+    def process_raw_observations_to_policy_input(st_data : SuperTrackDataField) -> torch.Tensor:
+        # 
+        """
+        Take inputs directly from Unity and transform them into a form that can be used as input to the policy.
+        """
+        # Local sim char state
+        sim_char_state = st_data.sim_char_state
+        sim_inputs = [t[None, ...] for t in sim_char_state.as_tensors] # Add batch dim
+        local_sim = SupertrackUtils.local(*sim_inputs)
+        # Local kin char state
+        kin_char_state = st_data.kin_char_state
+        kin_inputs = [t[None, ...] for t in kin_char_state.as_tensors] # Add batch dim
+        local_kin = SupertrackUtils.local(*kin_inputs)
+        return torch.cat((*local_kin, *local_sim), dim=-1)
 
     @staticmethod
     def extract_char_state(obs: torch.Tensor, idx: int) -> (CharState, int):
@@ -217,17 +231,6 @@ class SupertrackUtils:
         pos_a = x[:, x.shape[-1]//2:].reshape(B, -1, 3)
         rot_a = x[:, :x.shape[-1]//2].reshape(B, -1, 3)
         return pos_a, rot_a
-    
-    @staticmethod
-    def integrate_accel(cur_state: CharState, accel: torch.Tensor, rot_accel: torch.Tensor, dt : float = 1/60) -> CharState:
-        # We have global accelerations, velocities, and positions. How do I
-        
-        next_state = SuperTrackDataField()
-        return next_state
-    
-    # @staticmethod
-    # def normalize_quat(q: torch.Tensor) -> torch.Tensor:
-    #     return q / torch.norm(q, dim=-1, keepdim=True)
 
     @staticmethod 
     def normalize_quat(quaternions, epsilon=1e-6):
@@ -254,4 +257,32 @@ class SupertrackUtils:
         result = torch.where(mask[..., None], identity_quaternion, quaternions)
         
         return result / torch.norm(result, dim=-1, keepdim=True)
+    
+
+    @staticmethod
+    @timed
+    def local(cur_pos: torch.Tensor, # shape [batch_size, num_bones, 3]
+            cur_rots: torch.Tensor, # shape [batch_size, num_bones, 4]
+            cur_vels: torch.Tensor,   # shape [batch_size, num_bones, 3]
+            cur_rot_vels: torch.Tensor, # shape [batch_size, num_bones, 3]
+            cur_heights: torch.Tensor, # shape [batch_size, num_bones]
+            cur_up_dir: torch.Tensor): # shape [batch_size, 3]
+        
+        B = cur_pos.shape[0] # batch_size
+        root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
+        inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
+        local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
+        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_t_bones, 4]
+        two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [batch_size, num_t_bones, 6]
+        local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
+        local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
+
+        # return_tensors = [local_pos, two_axis_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
+        return_tensors = [(local_pos, 'local_pos'), (two_axis_rots, 'two_axis_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
+        # Have to reshape instead of view because stride can be messed up in some cases
+        # return [tensor.reshape(B, -1) for tensor in return_tensors]
+        # for tensor, name in return_tensors:
+        #     print(f"{name} dtype: {tensor.dtype}")
+        return [tensor.reshape(B, -1) for tensor, name in return_tensors]
+
         
