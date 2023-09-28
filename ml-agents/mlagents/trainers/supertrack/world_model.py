@@ -37,28 +37,27 @@ class WorldModelNetwork(nn.Module):
     ):
         super().__init__()
         self.network_settings = network_settings
-        self.normalize = network_settings.normalize
-        self.h_size = network_settings.hidden_units
-        self.input_size = network_settings.input_size
-        if (self.input_size == -1):
+        h_size = network_settings.hidden_units
+        input_size = network_settings.input_size
+        if (input_size == -1):
             raise Exception("SuperTrack World Model created without input_size designated in yaml file")
 
-        # Used to normalize inputs
-        if self.normalize:
-            self._obs_encoder : nn.Module = nn.LayerNorm(self.input_size)
-        else:
-            self._obs_encoder : nn.Module = VectorInput(self.input_size, False)
-        self._body_encoder = LinearEncoder(
-            self.network_settings.input_size,
+        _layers = []
+
+        # Normalize inputs if required
+        if network_settings.normalize:
+            _layers += [nn.LayerNorm(input_size)]
+        
+        _layers += [LinearEncoder(
+            input_size,
             self.network_settings.num_layers - 1,
-            self.h_size,
+            h_size,
             Initialization.KaimingHeNormal,
             1,
-            network_settings.activation_function)
-        self._output_layer = linear_layer(self.h_size, self.network_settings.output_size)
-        
+            network_settings.activation_function)]
+
+        _layers += [linear_layer(h_size, self.network_settings.output_size)]
+        self.layers = nn.Sequential(*_layers)
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        result = self._output_layer(self._body_encoder(self._obs_encoder(inputs)))
-        # Clip the outputs to the range [-100, 100]
-        # result = torch.clamp(result, min=-100, max=100)
-        return result
+        return self.layers(inputs)

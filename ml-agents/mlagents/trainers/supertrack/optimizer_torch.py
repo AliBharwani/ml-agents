@@ -312,30 +312,27 @@ class PolicyNetworkBody(nn.Module):
     ):
         super().__init__()
         self.network_settings = network_settings
-        self.normalize = network_settings.normalize
-        self.h_size = network_settings.hidden_units
         self.input_size = self.network_settings.input_size
         if (self.input_size == -1):
             raise Exception("SuperTrack Policy Network created without input_size designated in yaml file")
         
+        _layers = []
         # Used to normalize inputs
-        if self.normalize:
-            self._obs_encoder : nn.Module = nn.LayerNorm(self.input_size)
-        else:
-            self._obs_encoder : nn.Module = VectorInput(self.input_size, False)
-        self._body_encoder = LinearEncoder(
+        if self.network_settings.normalize:
+            _layers += [nn.LayerNorm(self.input_size)]
+
+        _layers += [LinearEncoder(
             self.network_settings.input_size,
             self.network_settings.num_layers,
-            self.h_size)
+            self.network_settings.hidden_units)]
+        self.layers = nn.Sequential(*_layers)
 
     @property
     def memory_size(self) -> int:
         return 0
 
     def forward(self, inputs: torch.Tensor):
-        normalized = self._obs_encoder(inputs)
-        encoding = self._body_encoder(normalized)
-        return encoding
+        return self.layers(inputs)
 
 class SuperTrackPolicyNetwork(nn.Module, Actor):
     MODEL_EXPORT_VERSION = 1
