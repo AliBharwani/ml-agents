@@ -6,6 +6,7 @@ import os
 import threading
 from typing import Dict, Set, List
 from collections import defaultdict
+import torch.multiprocessing as mp
 
 import numpy as np
 
@@ -63,10 +64,14 @@ class TrainerController:
         self.registered_behavior_ids: Set[str] = set()
 
         self.trainer_threads: List[threading.Thread] = []
+        self.trainer_processes : List[mp.Process] = []
         self.kill_trainers = False
         np.random.seed(training_seed)
         torch_utils.torch.manual_seed(training_seed)
         self.rank = get_rank()
+
+        # Still in test
+        self.use_mp = False
 
     @timed
     def _save_models(self):
@@ -119,6 +124,7 @@ class TrainerController:
         parsed_behavior_id = BehaviorIdentifiers.from_name_behavior_id(name_behavior_id)
         brain_name = parsed_behavior_id.brain_name
         trainerthread = None
+        trainerprocess = None
         if brain_name in self.trainers:
             trainer = self.trainers[brain_name]
         else:
@@ -126,10 +132,14 @@ class TrainerController:
             self.trainers[brain_name] = trainer
             if trainer.threaded:
                 # Only create trainer thread for new trainers
-                trainerthread = threading.Thread(
-                    target=self.trainer_update_func, args=(trainer,), daemon=True
-                )
-                self.trainer_threads.append(trainerthread)
+                if not self.use_mp:
+                    trainerthread = threading.Thread(
+                        target=self.trainer_update_func, args=(trainer,), daemon=True
+                    )
+                    self.trainer_threads.append(trainerthread)
+                else:
+                    trainerprocess = mp.Process(target=self.trainer_update_func, args=(trainer,), daemon=True)
+                    self.trainer_processes.append(trainerprocess)
             env_manager.on_training_started(
                 brain_name, self.trainer_factory.trainer_config[brain_name]
             )
@@ -139,6 +149,10 @@ class TrainerController:
             env_manager.training_behaviors[name_behavior_id],
         )
         trainer.add_policy(parsed_behavior_id, policy)
+        if self.use_mp:
+            trainer.policy.actor.share_memory()
+            if trainer.get_trainer_name() == "sac" or trainer.get_trainer_name() == "supertrack" or trainer.get_trainer_name() == "test":
+                trainer.optimizer._world_model.share_memory()
 
         agent_manager = AgentManager(
             policy,
@@ -156,8 +170,16 @@ class TrainerController:
         trainer.subscribe_trajectory_queue(agent_manager.trajectory_queue)
 
         # Only start new trainers
-        if trainerthread is not None:
-            trainerthread.start()
+        if trainerthread is not None or trainerprocess is not None:
+            if trainerthread is not None:
+                trainerthread.start()
+            if trainerprocess is not None: 
+                trainerprocess.start()
+            try: 
+                trainer.optimizer.check_wm_layernorm("On trainer thread start")
+            except:
+                print("Failed to check wm layernorm on trainer thread start")
+            
 
     def _create_trainers_and_managers(
         self, env_manager: EnvManager, behavior_ids: Set[str]
@@ -275,6 +297,24 @@ class TrainerController:
         :return:
         """
         self.kill_trainers = True
+        if self.use_mp:
+            for t in self.trainer_processes:
+                try:
+                    t.join(timeout_seconds)
+                except Exception:
+                    pass
+
+            with hierarchical_timer("trainer_threads") as main_timer_node:
+                for trainer_thread in self.trainer_threads:
+                    thread_timer_stack = get_timer_stack_for_thread(trainer_thread)
+                    if thread_timer_stack:
+                        main_timer_node.merge(
+                            thread_timer_stack.root,
+                            root_name="thread_root",
+                            is_parallel=True,
+                        )
+                        merge_gauges(thread_timer_stack.gauges)
+                return
         for t in self.trainer_threads:
             try:
                 t.join(timeout_seconds)

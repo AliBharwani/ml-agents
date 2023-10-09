@@ -2,6 +2,7 @@
 # Contains an implementation of SAC as described in https://arxiv.org/abs/1801.01290
 # and implemented in https://github.com/hill-a/stable-baselines
 
+import threading
 from typing import cast
 
 import numpy as np
@@ -81,11 +82,13 @@ class SACTrainer(OffPolicyTrainer):
         )
 
         self.checkpoint_replay_buffer = self.hyperparameters.save_replay_buffer
+        print(f"Torch SAC Trainer: {threading.current_thread().name}")
 
     def _process_trajectory(self, trajectory: Trajectory) -> None:
         """
         Takes a trajectory and processes it, putting it into the replay buffer.
         """
+        self.optimizer.check_wm_layernorm(f"Processing trajectory!")
         super()._process_trajectory(trajectory)
         last_step = trajectory.steps[-1]
         agent_id = trajectory.agent_id  # All the agents should have the same ID

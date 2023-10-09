@@ -147,7 +147,7 @@ class NetworkSettings:
     learning_rate: float = 3.0e-4
     hidden_units: int = 128
     training_window: int = 32
-    activation_function = ActivationType.SWISH
+    activation_function : ActivationType = ActivationType.SWISH
     num_layers: int = 2
     vis_encode_type: EncoderType = EncoderType.SIMPLE
     memory: Optional[MemorySettings] = None

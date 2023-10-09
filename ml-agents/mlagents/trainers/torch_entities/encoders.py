@@ -24,6 +24,7 @@ class Normalizer(nn.Module):
             5,
         )
         if torch.isnan(normalized_state).any():
+            print("normalized_state has nan")
             pdb.set_trace()
         return normalized_state
 

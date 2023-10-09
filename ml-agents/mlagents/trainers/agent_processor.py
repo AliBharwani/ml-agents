@@ -1,3 +1,4 @@
+import multiprocessing
 import sys
 import numpy as np
 from typing import List, Dict, TypeVar, Generic, Tuple, Any, Union
@@ -377,6 +378,7 @@ class AgentManagerQueue(Generic[T]):
         """
         self._maxlen: int = maxlen
         self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
+        # self._queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=maxlen)
         self._behavior_id = behavior_id
 
     @property

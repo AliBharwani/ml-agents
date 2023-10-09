@@ -9,8 +9,9 @@ from turtle import up
 from typing import Dict, cast
 import os
 
-from mlagents.trainers.buffer import BufferKey
+from mlagents.trainers.buffer import AgentBuffer, BufferKey
 from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils
+from mlagents.trainers.supertrack.test_optimizer_torch import TorchTestOptimizer
 
 from mlagents.trainers.trajectory import ObsUtil
 import attr
@@ -45,10 +46,10 @@ logger = get_logger(__name__)
 
 BUFFER_TRUNCATE_PERCENT = 0.8
 
-TRAINER_NAME = "supertrack"
+TRAINER_NAME = "test"
 
 
-class SuperTrackTrainer(RLTrainer):
+class TestTrainer(RLTrainer):
     """
     This is an implementation of the SuperTrack world-based RL algorithm
     """
@@ -80,11 +81,11 @@ class SuperTrackTrainer(RLTrainer):
             artifact_path,
             reward_buff_cap,
         )
-        print(f"SuperTrackTrainer is on thread: {threading.current_thread().name}")
+        print(f"Test is on thread: {threading.current_thread().name}")
 
         self.seed = seed
         self.policy: TorchPolicy = None  # type: ignore
-        self.optimizer: TorchSuperTrackOptimizer = None  # type: ignore
+        self.optimizer: TorchTestOptimizer = None  # type: ignore
         self.hyperparameters: SuperTrackSettings = cast(
             SuperTrackSettings, trainer_settings.hyperparameters
         )
@@ -222,13 +223,13 @@ class SuperTrackTrainer(RLTrainer):
         while (
             self._step - self.hyperparameters.buffer_init_steps
         ) / self.update_steps > self.steps_per_update:
-            logger.debug(f"Updating SuperTrack policy at step {self._step}")
+            logger.debug(f"Updating Test policy at step {self._step}")
             buffer = self.update_buffer
             if self._has_enough_data_to_train():
-                world_model_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size,self.wm_window)
-                policy_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size, self.policy_window)
+                # world_model_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size,self.wm_window)
+                # policy_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size, self.policy_window)
 
-                update_stats = self.optimizer.update_world_model(world_model_minibatch, self.batch_size, self.wm_window)
+                update_stats = self.optimizer.update_world_model(AgentBuffer(), self.batch_size, self.wm_window)
                 # update_stats.update(self.optimizer.update_policy(policy_minibatch, self.hyperparameters.batch_size, self.policy_window))
                 for stat_name, value in update_stats.items():
                     batch_update_stats[stat_name].append(value)
@@ -257,12 +258,14 @@ class SuperTrackTrainer(RLTrainer):
         """
         self.optimizer.check_wm_layernorm(f"Processing trajectory!")
         super()._process_trajectory(trajectory)
-        agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-        SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory)
+        # agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
+        # SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory)
+        # self._append_to_update_buffer(agent_buffer_trajectory)
+        agent_buffer_trajectory = trajectory.to_agentbuffer()
         self._append_to_update_buffer(agent_buffer_trajectory)
 
     def create_optimizer(self) -> TorchOptimizer:
-        return TorchSuperTrackOptimizer(  # type: ignore
+        return TorchTestOptimizer(  # type: ignore
             cast(TorchPolicy, self.policy), self.trainer_settings  # type: ignore
         )  # type: ignore
 

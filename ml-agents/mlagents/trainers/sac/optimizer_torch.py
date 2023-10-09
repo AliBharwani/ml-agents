@@ -1,8 +1,11 @@
+import threading
 import numpy as np
 from typing import Dict, List, NamedTuple, cast, Tuple, Optional
 import attr
+from sympy import hyper
 
 from mlagents.torch_utils import torch, nn, default_device
+from mlagents.trainers.supertrack.world_model import WorldModelNetwork
 
 from mlagents_envs.logging_util import get_logger
 from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
@@ -228,8 +231,38 @@ class TorchSACOptimizer(TorchOptimizer):
         self.entropy_optimizer = torch.optim.Adam(
             self._log_ent_coef.parameters(), lr=hyperparameters.learning_rate
         )
+        self._world_model = WorldModelNetwork(policy.network_settings)
+        
+        self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=hyperparameters.learning_rate)
+        self._world_model.train()
         self._move_to_device(default_device())
+        self.check_wm_layernorm("After init")
+        print(f"Initializing SAC Optimzer on thread: {threading.current_thread().name}")
+        print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
+        self.first_update = True
 
+    def check_wm_layernorm(self, print_on_true : str = None):
+        # cur_thread_name = threading.current_thread().name
+        # print(f"Called from thread: {cur_thread_name} - message: {print_on_true}")
+        # if self.init_thread_name != cur_thread_name:
+        #     print(f"Called from thread: {cur_thread_name}, but initialized on thread: {self.init_thread_name}")
+        #     # Print stack trace
+        #     traceback.print_exc()
+        #     pdb.set_trace()
+        encoder_found = False
+        for layer in self._world_model.layers:
+            if isinstance(layer, nn.LayerNorm):
+                encoder_found = True
+                if torch.allclose(layer.weight, torch.zeros_like(layer.weight)):
+                    print("Layer norm weight is 0!")
+                    if print_on_true is not None:
+                        print(print_on_true)
+                        # pdb.set_trace()
+        if not encoder_found:
+            print("No layer norm found!")
+            if print_on_true is not None:
+                print(print_on_true)
+                # pdb.set_trace() 
     @property
     def critic(self):
         return self._critic
@@ -239,6 +272,7 @@ class TorchSACOptimizer(TorchOptimizer):
         self.target_network.to(device)
         self._critic.to(device)
         self.q_network.to(device)
+        self._world_model.to(device)
 
     def sac_q_loss(
         self,
@@ -476,6 +510,8 @@ class TorchSACOptimizer(TorchOptimizer):
 
             condensed_q_output[key] = torch.mean(only_action_qs, dim=0)
         return condensed_q_output
+    
+
 
     @timed
     def update(self, batch: AgentBuffer, num_sequences: int) -> Dict[str, float]:
@@ -488,6 +524,14 @@ class TorchSACOptimizer(TorchOptimizer):
             indexed by name. If none, don't update the reward signals.
         :return: Output from update process.
         """
+        if self.first_update:
+            print(f"Updating on thread: {threading.current_thread().name}")
+            self.check_wm_layernorm("Before first update")
+            
+            print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
+            self.first_update = False
+        self.check_wm_layernorm("During Update")
+
         rewards = {}
         for name in self.reward_signals:
             rewards[name] = ModelUtils.list_to_tensor(

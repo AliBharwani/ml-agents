@@ -65,6 +65,8 @@ class CharState():
     # rotations_two_axis_form: np.ndarray
     @functools.cached_property
     def as_tensors(self):
+        if not torch.is_tensor(self.positions):
+            return torch.tensor(self.positions, dtype=torch.float32), torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.velocities, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32), torch.tensor(self.heights, dtype=torch.float32), torch.tensor(self.up_dir, dtype=torch.float32)#[None, :]
         return self.positions, self.rotations, self.velocities, self.rot_velocities, self.heights, self.up_dir
 
     # @functools.cached_property
@@ -82,6 +84,8 @@ class PDTargets():
 
     @functools.cached_property
     def as_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]: 
+        if not torch.is_tensor(self.rotations):
+            return torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32)
         return self.rotations, self.rot_velocities
 
     # @functools.cached_property
@@ -109,10 +113,7 @@ class SupertrackUtils:
         to derive the final PD targets as t = exp(𝛼/2 * o) ⊗ k_t. Here, 𝛼 
         serves as a scaling factor for the offsets.
         """
-        B, num_bones, _ = actions.shape
-        actions = actions.reshape(-1, 3)
-
-        return pyt.matrix_to_quaternion(pyt.so3_exp_map(actions * (alpha/2))).reshape(B, num_bones, 4)
+        return pyt.axis_angle_to_quaternion(actions * alpha)
         
     @staticmethod
     def process_raw_observations_to_policy_input(st_data : SuperTrackDataField) -> torch.Tensor:
@@ -177,6 +178,47 @@ class SupertrackUtils:
             idx += 3
         return PDTargets(rotations, rot_velocities), idx 
     
+
+    @staticmethod
+    def extract_char_state_np(obs, idx: int) -> (CharState, int):
+        positions: np.ndarray = np.zeros((NUM_BONES, 3))
+        rotations: np.ndarray = np.zeros((NUM_BONES, 4))
+        velocities: np.ndarray = np.zeros((NUM_BONES, 3))
+        rot_velocities: np.ndarray = np.zeros((NUM_BONES, 3))
+        heights: np.ndarray = np.zeros(NUM_BONES)
+        # rotations_two_axis_form: np.ndarray = np.zeros((NUM_BONES, 6))
+        for i in range(NUM_BONES):
+            positions[i] = obs[idx:idx+3]
+            idx += 3
+            rotations[i] = obs[idx:idx+4]
+            idx += 4
+            velocities[i] = obs[idx:idx+3]
+            idx += 3
+            rot_velocities[i] = obs[idx:idx+3]
+            idx += 3
+            heights[i] = obs[idx]
+            idx += 1
+        up_dir = obs[idx:idx+3]
+        idx += 3
+        return CharState(positions,
+                        rotations,
+                        velocities,
+                        rot_velocities, 
+                        heights,
+                        up_dir), idx 
+
+    @staticmethod
+    def extract_pd_targets_np(obs, idx) -> (PDTargets, int):
+        rotations = np.zeros((NUM_BONES, 4))
+        rot_velocities = np.zeros((NUM_BONES, 3))
+        # rotations_two_axis_form: List[np.ndarray] = np.zeros((NUM_BONES, 6))
+        for i in range(NUM_BONES):
+            rotations[i] = obs[idx:idx+4]
+            idx += 4
+            rot_velocities[i] = obs[idx:idx+3]
+            idx += 3
+        return PDTargets(rotations, rot_velocities), idx 
+    
     @staticmethod
     def parse_supertrack_data_field(inputs: List[torch.Tensor]) -> AgentBuffer:
         if len(inputs) != 1:
@@ -208,13 +250,13 @@ class SupertrackUtils:
             # print(f"Obs at idx {agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ][i]} : {obs}")
             # Extract sim char state
             idx = 0
-            sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx)
+            sim_char_state, idx = SupertrackUtils.extract_char_state_np(obs, idx)
             # Extract kin char state
-            kin_char_state, idx = SupertrackUtils.extract_char_state(obs, idx)
+            kin_char_state, idx = SupertrackUtils.extract_char_state_np(obs, idx)
             # Extract pre_targets
-            pre_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx)
+            pre_targets, idx = SupertrackUtils.extract_pd_targets_np(obs, idx)
             # Extract post_targets
-            post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx)
+            post_targets, idx = SupertrackUtils.extract_pd_targets_np(obs, idx)
             if idx != TOTAL_OBS_LEN:
                 raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
             supertrack_data.append(
@@ -245,16 +287,16 @@ class SupertrackUtils:
             Quaternions with small L2 norm replaced by the identity quaternion.
         """
         # Compute the L2 norm squared for each quaternion
-        norm_squared = (quaternions ** 2).sum(dim=-1)
-        
+        # norm_squared = (quaternions ** 2).sum(dim=-1)
+        norms = torch.norm(quaternions, p=2, dim=-1, keepdim=True)
         # Create a mask for quaternions with L2 norm close to zero
-        mask = norm_squared < epsilon
+        mask = norms < epsilon
         
         # Create a tensor of identity quaternions
         identity_quaternion = torch.tensor([1.0, 0.0, 0.0, 0.0], device=default_device())
         
         # Use torch.where to replace the quaternions with identity
-        result = torch.where(mask[..., None], identity_quaternion, quaternions)
+        result = torch.where(mask, identity_quaternion, quaternions)
         
         return result / torch.norm(result, dim=-1, keepdim=True)
     
@@ -273,7 +315,7 @@ class SupertrackUtils:
         inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
         local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
         local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_t_bones, 4]
-        two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [batch_size, num_t_bones, 6]
+        two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
 

@@ -624,7 +624,8 @@ class SimpleActor(nn.Module, Actor):
         return self.network_body.memory_size
 
     def update_normalization(self, buffer: AgentBuffer) -> None:
-        self.network_body.update_normalization(buffer)
+        # self.network_body.update_normalization(buffer)
+        pass
 
     def get_action_and_stats(
         self,
@@ -649,23 +650,23 @@ class SimpleActor(nn.Module, Actor):
 
         return action, run_out, memories
 
-    def get_stats(
-        self,
-        inputs: List[torch.Tensor],
-        actions: AgentAction,
-        masks: Optional[torch.Tensor] = None,
-        memories: Optional[torch.Tensor] = None,
-        sequence_length: int = 1,
-    ) -> Dict[str, Any]:
-        encoding, actor_mem_outs = self.network_body(
-            inputs, memories=memories, sequence_length=sequence_length
-        )
+    # def get_stats(
+    #     self,
+    #     inputs: List[torch.Tensor],
+    #     actions: AgentAction,
+    #     masks: Optional[torch.Tensor] = None,
+    #     memories: Optional[torch.Tensor] = None,
+    #     sequence_length: int = 1,
+    # ) -> Dict[str, Any]:
+    #     encoding, actor_mem_outs = self.network_body(
+    #         inputs, memories=memories, sequence_length=sequence_length
+    #     )
 
-        log_probs, entropies = self.action_model.evaluate(encoding, masks, actions)
-        run_out = {}
-        run_out["log_probs"] = log_probs
-        run_out["entropy"] = entropies
-        return run_out
+    #     log_probs, entropies = self.action_model.evaluate(encoding, masks, actions)
+    #     run_out = {}
+    #     run_out["log_probs"] = log_probs
+    #     run_out["entropy"] = entropies
+    #     return run_out
 
     def forward(
         self,

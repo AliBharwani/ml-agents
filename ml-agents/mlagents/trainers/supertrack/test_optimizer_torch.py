@@ -16,7 +16,7 @@ from mlagents.trainers.supertrack.world_model import WorldModelNetwork
 from mlagents.trainers.torch_entities.action_model import ActionModel
 from mlagents.trainers.torch_entities.encoders import VectorInput
 from mlagents.trainers.torch_entities.layers import LinearEncoder
-from mlagents.trainers.torch_entities.networks import Actor, NetworkBody
+from mlagents.trainers.torch_entities.networks import Actor
 from mlagents_envs.base_env import ActionSpec, ObservationSpec
 
 from mlagents_envs.timers import timed
@@ -38,31 +38,31 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     offset_scale: float = 120.0
     
     
-class TorchSuperTrackOptimizer(TorchOptimizer):
+class TorchTestOptimizer(TorchOptimizer):
     dtime = 1 / 60
 
     def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
         super().__init__(policy, trainer_settings)
         self.tls = threading.local()
         self.trainer_settings = trainer_settings
-        # self._world_model = WorldModelNetwork(
-        #     trainer_settings.world_model_network_settings
-        # )
+        self._world_model = WorldModelNetwork(
+            trainer_settings.world_model_network_settings
+        )
         self.init_thread_name = threading.current_thread().name
-        print(f"TorchSuperTrackOptimizer is on thread: {threading.current_thread().name}")
-        # self.check_wm_layernorm("At initialization")
-        # self._world_model.to(default_device())
+        print(f"TorchTestOptimizer is on thread: {threading.current_thread().name}")
+        self.check_wm_layernorm("At initialization")
+        self._world_model.to(default_device())
         # policy.actor.to(default_device())
-        # self.check_wm_layernorm("Right after moving to CUDA")
+        self.check_wm_layernorm("Right after moving to CUDA")
         self.hyperparameters: SuperTrackSettings = cast(
             SuperTrackSettings, trainer_settings.hyperparameters
         )
         self.offset_scale = self.hyperparameters.offset_scale
         self.wm_lr = trainer_settings.world_model_network_settings.learning_rate
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
-        # self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
+        self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self.policy_optimizer = torch.optim.Adam(policy.actor.parameters(), lr=self.policy_lr)
-        # self._world_model.train()
+        self._world_model.train()
         self.policy.actor.train()
         # self.check_wm_layernorm("At the end of init")
         self.first_update = True
@@ -91,6 +91,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
     @timed
     def update_world_model(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
+        if self.first_update:
+            print(f"Updating on thread: {threading.current_thread().name}")
+            self.check_wm_layernorm("First update call")
+        return {}
+
         if self.first_update:
             print(f"Updating on thread: {threading.current_thread().name}")
             self._world_model = WorldModelNetwork(
@@ -395,174 +400,3 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
          }
         return modules
     
-
-
-class PolicyNetworkBody(nn.Module):
-    def __init__(
-            self,
-            network_settings: NetworkSettings,
-    ):
-        super().__init__()
-        self.network_settings = network_settings
-        self.input_size = self.network_settings.input_size
-        if (self.input_size == -1):
-            raise Exception("SuperTrack Policy Network created without input_size designated in yaml file")
-        
-        _layers = []
-        # Used to normalize inputs
-        if self.network_settings.normalize:
-            _layers += [nn.LayerNorm(self.input_size)]
-
-        _layers += [LinearEncoder(
-            self.network_settings.input_size,
-            self.network_settings.num_layers,
-            self.network_settings.hidden_units)]
-        self.layers = nn.Sequential(*_layers)
-
-    @property
-    def memory_size(self) -> int:
-        return 0
-
-    def forward(self, inputs: torch.Tensor):
-        return self.layers(inputs)
-
-class SuperTrackPolicyNetwork(nn.Module, Actor):
-    MODEL_EXPORT_VERSION = 3
-    def __init__(
-        self,
-        observation_specs: List[ObservationSpec],
-        network_settings: NetworkSettings,
-        action_spec: ActionSpec,
-        conditional_sigma: bool = False,
-        tanh_squash: bool = False,
-    ):
-        super().__init__()
-        # self.network_body = NetworkBody(observation_specs, network_settings)
-        self.network_body = PolicyNetworkBody(network_settings)
-        self.action_spec = action_spec
-        self.continuous_act_size_vector = torch.nn.Parameter(
-            torch.Tensor([network_settings.output_size]), requires_grad=False
-        )
-        self.version_number = torch.nn.Parameter(
-            torch.Tensor([self.MODEL_EXPORT_VERSION]), requires_grad=False
-        )
-        self.memory_size_vector = torch.nn.Parameter(
-            torch.Tensor([0]), requires_grad=False
-        )
-        self.encoding_size = network_settings.hidden_units
-        # Could convert action_spec to class instead of tuple, but having the dependency that Unity action size == Python action size
-        # is not a huge constraint
-        # action_spec.continuous_size = network_settings.output_size
-        self.action_model = ActionModel(
-            self.encoding_size,
-            action_spec,
-            conditional_sigma=conditional_sigma,
-            tanh_squash=tanh_squash,
-            deterministic=network_settings.deterministic,
-        )
-
-    def update_normalization(self, buffer: AgentBuffer) -> None:
-        pass # Not needed because we use layernorm
-
-    @property
-    def memory_size(self) -> int:
-        return self.network_body.memory_size
-    
-
-    def forward(
-        self,
-        inputs: List[torch.Tensor],
-        masks: Optional[torch.Tensor] = None,
-        memories: Optional[torch.Tensor] = None,
-    ) -> Tuple[Union[int, torch.Tensor], ...]:
-        """
-        Note: This forward() method is required for exporting to ONNX. Don't modify the inputs and outputs.
-
-        At this moment, torch.onnx.export() doesn't accept None as tensor to be exported,
-        so the size of return tuple varies with action spec.
-        """
-        encoding = self.network_body(inputs[0])
-
-        (
-            cont_action_out,
-            _disc_action_out,
-            _action_out_deprecated,
-            deterministic_cont_action_out,
-            _deterministic_disc_action_out,
-        ) = self.action_model.get_action_out(encoding, masks)
-        export_out = [ 
-            self.version_number,
-            self.memory_size_vector,
-            cont_action_out,
-            self.continuous_act_size_vector,
-            deterministic_cont_action_out,
-        ]
-        return tuple(export_out)
-
-    def get_action_and_stats(
-        self,
-        inputs: List[torch.Tensor],
-        masks: Optional[torch.Tensor] = None,
-        memories: Optional[torch.Tensor] = None,
-        sequence_length: int = 1,
-        deterministic=False,
-        inputs_already_formatted=False,
-        return_means=False,
-    ) -> Tuple[AgentAction, Dict[str, Any], torch.Tensor]:
-        """
-        Returns sampled actions.
-        If memory is enabled, return the memories as well.
-        :param inputs: A List of inputs as tensors.
-        :param masks: If using discrete actions, a Tensor of action masks.
-        :param memories: If using memory, a Tensor of initial memories.
-        :param sequence_length: If using memory, the sequence length.
-        :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
-            Memories will be None if not using memory.
-        """
-
-        # encoding, memories = self.network_body(
-        #     inputs, memories=memories, sequence_length=sequence_length
-        # )
-        # action, log_probs, entropies, _means = self.action_model(encoding, masks)
-        # run_out = {}
-        # # This is the clipped action which is not saved to the buffer
-        # # but is exclusively sent to the environment.
-        # run_out["env_action"] = action.to_action_tuple(
-        #     clip=self.action_model.clip_action
-        # )
-        # run_out["log_probs"] = log_probs
-        # run_out["entropy"] = entropies
-
-        # return action, run_out, memories
-
-        if (len(inputs) != 1):
-            raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
-        # pdb.set_trace()
-        supertrack_data = None
-        if inputs_already_formatted:
-            policy_input = inputs[0]
-        else:
-            supertrack_data = SupertrackUtils.parse_supertrack_data_field(inputs[0])
-            policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
-            # policy_input = torch.randn(1, POLICY_INPUT_LEN)
-        if policy_input.shape[-1] != POLICY_INPUT_LEN:
-            raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
-        encoding = self.network_body(policy_input)
-        action, log_probs, entropies, means = self.action_model(encoding, None) 
-        hn = lambda x: torch.isnan(x).any()
-        if hn(policy_input) or hn(encoding) or hn(action.continuous_tensor):
-            print(f"Policy_input nan: {hn(policy_input)}, encoding nan: {hn(encoding)}, action nan: {hn(action.continuous_tensor)}")
-            pdb.set_trace()
-        run_out = {}
-        # This is the clipped action which is not saved to the buffer
-        # but is exclusively sent to the environment.
-        run_out["env_action"] = action.to_action_tuple(
-            clip=self.action_model.clip_action
-        )
-        run_out["supertrack_data"] = supertrack_data
-        if return_means:
-            run_out["means"] = means
-        run_out["log_probs"] = log_probs
-        run_out["entropy"] = entropies
-
-        return action, run_out, None
