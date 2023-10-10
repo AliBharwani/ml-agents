@@ -105,11 +105,18 @@ class SuperTrackTrainer(RLTrainer):
 
     def _initialize(self):
         self.optimizer._init_world_model()
-        self.actor_gpu = copy.deepcopy(self.policy.actor)
-        self.actor_gpu.to("cuda")
-        self.actor_gpu.train()
-        self.optimizer.actor_gpu = self.actor_gpu
-        self.optimizer._init_policy()
+        
+        self.model_saver.register(self.policy)
+        self.model_saver.register(self.optimizer)
+        self.model_saver.initialize_or_load()
+        
+        if self.split_actor_devices:
+            actor_gpu = copy.deepcopy(self.policy.actor)
+            actor_gpu.to("cuda")
+            actor_gpu.train()
+            self.optimizer.actor_gpu = actor_gpu
+            self.optimizer.set_actor_gpu_to_optimizer()
+        
 
 ### FROM OFFPOLICYTRAINER LEVEL
 
@@ -210,10 +217,6 @@ class SuperTrackTrainer(RLTrainer):
         self.policy = policy
         self.policies[parsed_behavior_id.behavior_id] = policy
         self.optimizer = self.create_optimizer()
-
-        self.model_saver.register(self.policy)
-        self.model_saver.register(self.optimizer)
-        self.model_saver.initialize_or_load()
 
         # Needed to resume loads properly
         self._step = policy.get_current_step()

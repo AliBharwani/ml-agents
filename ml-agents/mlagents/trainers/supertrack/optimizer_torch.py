@@ -58,7 +58,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.first_update = True
         self.split_actor_devices = self.trainer_settings.split_actor_devices
         self.actor_gpu = None
-  
+        self.policy_optimizer = torch.optim.Adam(self.policy.actor.parameters(), lr=self.policy_lr)
+
     def _init_world_model(self):
         """
         Initializes the world model
@@ -70,12 +71,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self._world_model.train()
 
-    def _init_policy(self):
-        if self.split_actor_devices:
-            params = self.actor_gpu.parameters()
-        else:
-            params = self.policy.actor.parameters()
-        self.policy_optimizer = torch.optim.Adam(params, lr=self.policy_lr)
+    def set_actor_gpu_to_optimizer(self):
+        policy_optimizer_state = self.policy_optimizer.state_dict()
+        self.policy_optimizer = torch.optim.Adam(self.actor_gpu.parameters(), lr=self.policy_lr)
+        self.policy_optimizer.load_state_dict(policy_optimizer_state)
 
     def check_wm_layernorm(self, print_on_true : str = None):
         try: 
@@ -382,9 +381,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
     def get_modules(self):
         modules = {
-            # "Optimizer:WorldModel": self._world_model,
-            # "Optimizer:world_model_optimzer": self.world_model_optimzer,
-            # "Optimizer:policy_optimizer": self.policy_optimizer,
+            "Optimizer:WorldModel": self._world_model,
+            "Optimizer:world_model_optimzer": self.world_model_optimzer,
+            "Optimizer:policy_optimizer": self.policy_optimizer,
          }
         return modules
     

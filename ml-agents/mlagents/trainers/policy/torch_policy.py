@@ -67,12 +67,6 @@ class TorchPolicy(Policy):
         # m_size needed for training is determined by network, not trainer settings
         self.m_size = self.actor.memory_size
 
-
-    # def create_gpu_actor(self):
-    #     self.actor_gpu = copy.deepcopy(self.actor_cpu)
-    #     self.actor_gpu.to("cuda")
-    #     self.actor_gpu.train()
-        
     @property
     def export_memory_size(self) -> int:
         """
