@@ -70,8 +70,6 @@ class TrainerController:
         torch_utils.torch.manual_seed(training_seed)
         self.rank = get_rank()
 
-        # Still in test
-        self.use_mp = False
 
     @timed
     def _save_models(self):
@@ -129,6 +127,7 @@ class TrainerController:
             trainer = self.trainers[brain_name]
         else:
             trainer = self.trainer_factory.generate(brain_name)
+            self.use_mp = trainer.parameters.use_pytorch_mp
             self.trainers[brain_name] = trainer
             if trainer.threaded:
                 # Only create trainer thread for new trainers
@@ -138,7 +137,8 @@ class TrainerController:
                     )
                     self.trainer_threads.append(trainerthread)
                 else:
-                    trainerprocess = mp.Process(target=self.trainer_update_func, args=(trainer,), daemon=True)
+                    run_init = trainer.get_trainer_name() == "supertrack" 
+                    trainerprocess = mp.Process(target=self.trainer_update_func, args=(trainer,), kwargs={"run_initialize_function":run_init,}, daemon=True)
                     self.trainer_processes.append(trainerprocess)
             env_manager.on_training_started(
                 brain_name, self.trainer_factory.trainer_config[brain_name]
@@ -149,10 +149,10 @@ class TrainerController:
             env_manager.training_behaviors[name_behavior_id],
         )
         trainer.add_policy(parsed_behavior_id, policy)
-        if self.use_mp:
-            trainer.policy.actor.share_memory()
-            if trainer.get_trainer_name() == "sac" or trainer.get_trainer_name() == "supertrack" or trainer.get_trainer_name() == "test":
-                trainer.optimizer._world_model.share_memory()
+        # if self.use_mp:
+        #     trainer.policy.actor.share_memory()
+        #     if trainer.get_trainer_name() == "sac" or trainer.get_trainer_name() == "supertrack" or trainer.get_trainer_name() == "test":
+        #         trainer.optimizer._world_model.share_memory()
 
         agent_manager = AgentManager(
             policy,
@@ -161,6 +161,7 @@ class TrainerController:
             trainer.parameters.time_horizon,
             threaded=trainer.threaded,
             process_trajectory_on_termination=trainer.parameters.process_trajectory_on_termination,
+            use_pytorch_mp=trainer.parameters.use_pytorch_mp,
         )
         env_manager.set_agent_manager(name_behavior_id, agent_manager)
         env_manager.set_policy(name_behavior_id, policy)
@@ -332,7 +333,12 @@ class TrainerController:
                     )
                     merge_gauges(thread_timer_stack.gauges)
 
-    def trainer_update_func(self, trainer: Trainer) -> None:
+    def trainer_update_func(self, trainer: Trainer, run_initialize_function = False) -> None:
+        if run_initialize_function:
+            try:
+                trainer._initialize()
+            except Exception as e:
+                print("Failed to initialize trainer")
         while not self.kill_trainers:
             with hierarchical_timer("trainer_advance"):
                 trainer.advance()

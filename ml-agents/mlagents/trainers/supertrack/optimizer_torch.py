@@ -43,32 +43,34 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
     def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
         super().__init__(policy, trainer_settings)
-        self.tls = threading.local()
         self.trainer_settings = trainer_settings
-        # self._world_model = WorldModelNetwork(
-        #     trainer_settings.world_model_network_settings
-        # )
         self.init_thread_name = threading.current_thread().name
         print(f"TorchSuperTrackOptimizer is on thread: {threading.current_thread().name}")
-        # self.check_wm_layernorm("At initialization")
-        # self._world_model.to(default_device())
+
         # policy.actor.to(default_device())
-        # self.check_wm_layernorm("Right after moving to CUDA")
         self.hyperparameters: SuperTrackSettings = cast(
             SuperTrackSettings, trainer_settings.hyperparameters
         )
         self.offset_scale = self.hyperparameters.offset_scale
         self.wm_lr = trainer_settings.world_model_network_settings.learning_rate
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
-        # self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self.policy_optimizer = torch.optim.Adam(policy.actor.parameters(), lr=self.policy_lr)
-        # self._world_model.train()
         self.policy.actor.train()
         # self.check_wm_layernorm("At the end of init")
         self.first_update = True
-
+        # self._init_world_model()
         # print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
-
+  
+    def _init_world_model(self):
+        """
+        Initializes the world model
+        """
+        self._world_model = WorldModelNetwork(
+            self.trainer_settings.world_model_network_settings
+        )
+        self._world_model.to(default_device())
+        self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
+        self._world_model.train()
 
     def check_wm_layernorm(self, print_on_true : str = None):
         # cur_thread_name = threading.current_thread().name
@@ -92,15 +94,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     @timed
     def update_world_model(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
         if self.first_update:
+            # self._init_world_model()
             print(f"Updating on thread: {threading.current_thread().name}")
-            self._world_model = WorldModelNetwork(
-                self.trainer_settings.world_model_network_settings
-            )
-            self._world_model.to(default_device())
-            self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
-            self._world_model.train()
-            self.check_wm_layernorm("Initializing in update_world_model")
-            print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
+            self.check_wm_layernorm("On First Update")
             self.first_update = False
         self.check_wm_layernorm(f"At start of update_world_model")
         window_size = raw_window_size + 1
@@ -559,7 +555,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
-        run_out["supertrack_data"] = supertrack_data
+        # run_out["supertrack_data"] = supertrack_data
         if return_means:
             run_out["means"] = means
         run_out["log_probs"] = log_probs

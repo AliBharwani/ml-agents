@@ -371,14 +371,16 @@ class AgentManagerQueue(Generic[T]):
 
         pass
 
-    def __init__(self, behavior_id: str, maxlen: int = 0):
+    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False):
         """
         Initializes an AgentManagerQueue. Note that we can give it a behavior_id so that it can be identified
         separately from an AgentManager.
         """
         self._maxlen: int = maxlen
-        self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
-        # self._queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=maxlen)
+        if use_pytorch_mp:
+            self._queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=maxlen)
+        else:
+            self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
         self._behavior_id = behavior_id
 
     @property
@@ -435,16 +437,17 @@ class AgentManager(AgentProcessor):
         max_trajectory_length: int = sys.maxsize,
         threaded: bool = True,
         process_trajectory_on_termination: bool = False,
+        use_pytorch_mp: bool = False,
     ):
         super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
         trajectory_queue_len = 20 if threaded else 0
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
-            self._behavior_id, maxlen=trajectory_queue_len
+            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp
         )
         # NOTE: we make policy queues of infinite length to avoid lockups of the trainers.
         # In the environment manager, we make sure to empty the policy queue before continuing to produce steps.
         self.policy_queue: AgentManagerQueue[Policy] = AgentManagerQueue(
-            self._behavior_id, maxlen=0
+            self._behavior_id, maxlen=0, use_pytorch_mp=use_pytorch_mp
         )
         self.publish_trajectory_queue(self.trajectory_queue)
 

@@ -31,6 +31,9 @@ from mlagents.trainers.model_saver.model_saver import BaseModelSaver
 
 logger = get_logger(__name__)
 
+# Needed because pickle can't handle lambda functions
+def zero_function():
+    return 0
 
 class RLTrainer(Trainer):
     """
@@ -44,7 +47,7 @@ class RLTrainer(Trainer):
         # of what reward signals are actually present.
         self.cumulative_returns_since_policy_update: List[float] = []
         self.collected_rewards: Dict[str, Dict[str, int]] = {
-            "environment": defaultdict(lambda: 0)
+            "environment": defaultdict(zero_function)
         }
         self.update_buffer: AgentBuffer = AgentBuffer()
         self._stats_reporter.add_property(
@@ -57,7 +60,7 @@ class RLTrainer(Trainer):
             self.trainer_settings, self.artifact_path, self.load
         )
         self._has_warned_group_rewards = False
-
+    
     def end_episode(self) -> None:
         """
         A signal that the Episode has ended. The buffer must be reset.

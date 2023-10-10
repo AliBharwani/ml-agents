@@ -101,6 +101,10 @@ class SuperTrackTrainer(RLTrainer):
         self.batch_size = self.hyperparameters.batch_size
 
 
+    def _initialize(self):
+        self.optimizer._init_world_model()
+
+
 ### FROM OFFPOLICYTRAINER LEVEL
 
     def _checkpoint(self) -> ModelCheckpoint:
