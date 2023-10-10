@@ -4,6 +4,8 @@ import threading
 import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
+import numpy as np
+
 
 from mlagents.trainers.settings import NetworkSettings, OffPolicyHyperparamSettings
 import attr
@@ -47,19 +49,15 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.init_thread_name = threading.current_thread().name
         print(f"TorchSuperTrackOptimizer is on thread: {threading.current_thread().name}")
 
-        # policy.actor.to(default_device())
         self.hyperparameters: SuperTrackSettings = cast(
             SuperTrackSettings, trainer_settings.hyperparameters
         )
         self.offset_scale = self.hyperparameters.offset_scale
         self.wm_lr = trainer_settings.world_model_network_settings.learning_rate
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
-        self.policy_optimizer = torch.optim.Adam(policy.actor.parameters(), lr=self.policy_lr)
-        self.policy.actor.train()
-        # self.check_wm_layernorm("At the end of init")
         self.first_update = True
-        # self._init_world_model()
-        # print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
+        self.split_actor_devices = self.trainer_settings.split_actor_devices
+        self.actor_gpu = None
   
     def _init_world_model(self):
         """
@@ -71,6 +69,13 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self._world_model.to(default_device())
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self._world_model.train()
+
+    def _init_policy(self):
+        if self.split_actor_devices:
+            params = self.actor_gpu.parameters()
+        else:
+            params = self.policy.actor.parameters()
+        self.policy_optimizer = torch.optim.Adam(params, lr=self.policy_lr)
 
     def check_wm_layernorm(self, print_on_true : str = None):
         # cur_thread_name = threading.current_thread().name
@@ -497,13 +502,14 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
 
     def get_action_and_stats(
         self,
-        inputs: List[torch.Tensor],
+        inputs: List[Union[torch.Tensor, np.ndarray]],
         masks: Optional[torch.Tensor] = None,
         memories: Optional[torch.Tensor] = None,
         sequence_length: int = 1,
         deterministic=False,
         inputs_already_formatted=False,
         return_means=False,
+        use_cpu = False,
     ) -> Tuple[AgentAction, Dict[str, Any], torch.Tensor]:
         """
         Returns sampled actions.
@@ -512,28 +518,16 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :param masks: If using discrete actions, a Tensor of action masks.
         :param memories: If using memory, a Tensor of initial memories.
         :param sequence_length: If using memory, the sequence length.
+        :param deterministic: Whether to use deterministic actions.
+        :param inputs_already_formatted: Whether the inputs are already formatted.
+        :param return_means: Whether to return the means of the action distribution.
+        :param use_cpu: Whether to use CPU for inference. Implies that inputs are List[np.ndarray].
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """
-
-        # encoding, memories = self.network_body(
-        #     inputs, memories=memories, sequence_length=sequence_length
-        # )
-        # action, log_probs, entropies, _means = self.action_model(encoding, masks)
-        # run_out = {}
-        # # This is the clipped action which is not saved to the buffer
-        # # but is exclusively sent to the environment.
-        # run_out["env_action"] = action.to_action_tuple(
-        #     clip=self.action_model.clip_action
-        # )
-        # run_out["log_probs"] = log_probs
-        # run_out["entropy"] = entropies
-
-        # return action, run_out, memories
-
         if (len(inputs) != 1):
             raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
-        # pdb.set_trace()
+
         supertrack_data = None
         if inputs_already_formatted:
             policy_input = inputs[0]

@@ -3,6 +3,7 @@
 # and implemented in https://github.com/hill-a/stable-baselines
 
 from collections import defaultdict
+import copy
 from email import policy
 import threading
 from turtle import up
@@ -99,11 +100,16 @@ class SuperTrackTrainer(RLTrainer):
         self.effective_wm_window = self.wm_window + 1 # we include an extra piece of dating during training to simplify code
         self.effective_policy_window = self.policy_window + 1 
         self.batch_size = self.hyperparameters.batch_size
+        self.split_actor_devices = self.trainer_settings.split_actor_devices
 
 
     def _initialize(self):
         self.optimizer._init_world_model()
-
+        self.actor_gpu = copy.deepcopy(self.policy.actor_cpu)
+        self.actor_gpu.to("cuda")
+        self.actor_gpu.train()
+        self.optimizer.actor_gpu = self.actor_gpu
+        self.optimizer._init_policy()
 
 ### FROM OFFPOLICYTRAINER LEVEL
 
@@ -290,6 +296,7 @@ class SuperTrackTrainer(RLTrainer):
             self.trainer_settings.policy_network_settings,
             actor_cls,
             actor_kwargs,
+            split_on_cpugpu=self.split_actor_devices,
         )
         self.maybe_load_replay_buffer()
         return policy
@@ -299,8 +306,8 @@ class SuperTrackTrainer(RLTrainer):
         Gets policy from trainer associated with name_behavior_id
         :param name_behavior_id: full identifier of policy
         """
-
         return self.policy
+        
 
     @staticmethod
     def get_trainer_name() -> str:

@@ -304,5 +304,6 @@ class RLTrainer(Trainer):
                 with hierarchical_timer("_update_policy"):
                     if self._update_policy():
                         for q in self.policy_queues:
+                            print(f"Getting policy queue")
                             # Get policies that correspond to the policy queue in question
                             q.put(self.get_policy(q.behavior_id))

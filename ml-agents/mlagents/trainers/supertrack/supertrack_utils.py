@@ -1,7 +1,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Tuple, cast
+from typing import Dict, List, Tuple, Union, cast
 import os
 import functools
 import pdb
@@ -50,47 +50,39 @@ class Bone(Enum):
 
 @dataclass
 class CharState():
-    # positions : np.ndarray
-    # rotations : np.ndarray
-    # velocities : np.ndarray
-    # rot_velocities : np.ndarray
-    # heights : np.ndarray
-    # up_dir : np.ndarray
-    positions: torch.Tensor
-    rotations: torch.Tensor
-    velocities: torch.Tensor
-    rot_velocities: torch.Tensor
-    heights: torch.Tensor
-    up_dir: torch.Tensor
-    # rotations_two_axis_form: np.ndarray
+    positions: Union[np.ndarray, torch.Tensor]
+    rotations: Union[np.ndarray, torch.Tensor]
+    velocities: Union[np.ndarray, torch.Tensor]
+    rot_velocities: Union[np.ndarray, torch.Tensor]
+    heights: Union[np.ndarray, torch.Tensor]
+    up_dir: Union[np.ndarray, torch.Tensor]
+    
     @functools.cached_property
     def as_tensors(self):
         if not torch.is_tensor(self.positions):
             return torch.tensor(self.positions, dtype=torch.float32), torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.velocities, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32), torch.tensor(self.heights, dtype=torch.float32), torch.tensor(self.up_dir, dtype=torch.float32)#[None, :]
         return self.positions, self.rotations, self.velocities, self.rot_velocities, self.heights, self.up_dir
+    
+    @functools.cached_property
+    def values(self):
+        return self.positions, self.rotations, self.velocities, self.rot_velocities, self.heights, self.up_dir
 
-    # @functools.cached_property
-    # def as_tensors(self):
-    #     # add a dimension to up_dir to make it a 1x3 tensor, so that we can use similar logic 
-    #     return torch.tensor(self.positions, dtype=torch.float32), torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.velocities, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32), torch.tensor(self.heights, dtype=torch.float32), torch.tensor(self.up_dir, dtype=torch.float32)#[None, :]
-
+    
 @dataclass
 class PDTargets():
-    # rotations : np.ndarray
-    # rot_velocities : np.ndarray
-    rotations : torch.Tensor
-    rot_velocities : torch.Tensor
-    # rotations_two_axis_form: np.ndarray
+    rotations : Union[np.ndarray, torch.Tensor]
+    rot_velocities : Union[np.ndarray, torch.Tensor]
 
     @functools.cached_property
     def as_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]: 
         if not torch.is_tensor(self.rotations):
             return torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32)
         return self.rotations, self.rot_velocities
+    
+    @functools.cached_property
+    def values(self):
+        return self.rotations, self.rot_velocities
 
-    # @functools.cached_property
-    # def as_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]: 
-    #     return torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32)
 
 @dataclass
 class SuperTrackDataField():
@@ -99,7 +91,6 @@ class SuperTrackDataField():
     pre_targets: PDTargets
     post_targets: PDTargets
     
-
 class SupertrackUtils:
 
     @staticmethod
@@ -123,27 +114,29 @@ class SupertrackUtils:
         """
         # Local sim char state
         sim_char_state = st_data.sim_char_state
-        sim_inputs = [t[None, ...] for t in sim_char_state.as_tensors] # Add batch dim
+        sim_inputs = [t[None, ...] for t in sim_char_state.values] # Add batch dim
         local_sim = SupertrackUtils.local(*sim_inputs)
         # Local kin char state
         kin_char_state = st_data.kin_char_state
-        kin_inputs = [t[None, ...] for t in kin_char_state.as_tensors] # Add batch dim
+        kin_inputs = [t[None, ...] for t in kin_char_state.values] # Add batch dim
         local_kin = SupertrackUtils.local(*kin_inputs)
         return torch.cat((*local_kin, *local_sim), dim=-1)
 
     @staticmethod
-    def extract_char_state(obs: torch.Tensor, idx: int) -> (CharState, int):
-        # positions: np.ndarray = np.zeros((NUM_BONES, 3))
-        # rotations: np.ndarray = np.zeros((NUM_BONES, 4))
-        # velocities: np.ndarray = np.zeros((NUM_BONES, 3))
-        # rot_velocities: np.ndarray = np.zeros((NUM_BONES, 3))
-        # heights: np.ndarray = np.zeros(NUM_BONES)
-        positions: torch.Tensor = torch.zeros((NUM_BONES, 3))
-        rotations: torch.Tensor = torch.zeros((NUM_BONES, 4))
-        velocities: torch.Tensor = torch.zeros((NUM_BONES, 3))
-        rot_velocities: torch.Tensor = torch.zeros((NUM_BONES, 3))
-        heights: torch.Tensor = torch.zeros(NUM_BONES)
-        # rotations_two_axis_form: np.ndarray = np.zeros((NUM_BONES, 6))
+    def extract_char_state(obs: Union[torch.tensor, np.ndarray], idx: int, use_tensor: bool) -> (CharState, int):
+        if use_tensor:
+            positions: torch.Tensor = torch.zeros((NUM_BONES, 3), device=obs.device)
+            rotations: torch.Tensor = torch.zeros((NUM_BONES, 4), device=obs.device)
+            velocities: torch.Tensor = torch.zeros((NUM_BONES, 3), device=obs.device)
+            rot_velocities: torch.Tensor = torch.zeros((NUM_BONES, 3), device=obs.device)
+            heights: torch.Tensor = torch.zeros(NUM_BONES, device=obs.device)
+        else:
+            positions: np.ndarray = np.zeros((NUM_BONES, 3))
+            rotations: np.ndarray = np.zeros((NUM_BONES, 4))
+            velocities: np.ndarray = np.zeros((NUM_BONES, 3))
+            rot_velocities: np.ndarray = np.zeros((NUM_BONES, 3))
+            heights: np.ndarray = np.zeros(NUM_BONES)
+
         for i in range(NUM_BONES):
             positions[i] = obs[idx:idx+3]
             idx += 3
@@ -165,12 +158,14 @@ class SupertrackUtils:
                         up_dir), idx 
 
     @staticmethod
-    def extract_pd_targets(obs, idx) -> (PDTargets, int):
-        # rotations = np.zeros((NUM_BONES, 4))
-        # rot_velocities = np.zeros((NUM_BONES, 3))
-        rotations = torch.zeros((NUM_BONES, 4))
-        rot_velocities = torch.zeros((NUM_BONES, 3))
-        # rotations_two_axis_form: List[np.ndarray] = np.zeros((NUM_BONES, 6))
+    def extract_pd_targets(obs: Union[torch.tensor, np.ndarray], idx, use_tensor : bool) -> (PDTargets, int):
+        if use_tensor:
+            rotations = torch.zeros((NUM_BONES, 4), device=obs.device)
+            rot_velocities = torch.zeros((NUM_BONES, 3), device=obs.device)
+        else:
+            rotations = np.zeros((NUM_BONES, 4))
+            rot_velocities = np.zeros((NUM_BONES, 3))
+
         for i in range(NUM_BONES):
             rotations[i] = obs[idx:idx+4]
             idx += 4
@@ -178,60 +173,21 @@ class SupertrackUtils:
             idx += 3
         return PDTargets(rotations, rot_velocities), idx 
     
-
-    @staticmethod
-    def extract_char_state_np(obs, idx: int) -> (CharState, int):
-        positions: np.ndarray = np.zeros((NUM_BONES, 3))
-        rotations: np.ndarray = np.zeros((NUM_BONES, 4))
-        velocities: np.ndarray = np.zeros((NUM_BONES, 3))
-        rot_velocities: np.ndarray = np.zeros((NUM_BONES, 3))
-        heights: np.ndarray = np.zeros(NUM_BONES)
-        # rotations_two_axis_form: np.ndarray = np.zeros((NUM_BONES, 6))
-        for i in range(NUM_BONES):
-            positions[i] = obs[idx:idx+3]
-            idx += 3
-            rotations[i] = obs[idx:idx+4]
-            idx += 4
-            velocities[i] = obs[idx:idx+3]
-            idx += 3
-            rot_velocities[i] = obs[idx:idx+3]
-            idx += 3
-            heights[i] = obs[idx]
-            idx += 1
-        up_dir = obs[idx:idx+3]
-        idx += 3
-        return CharState(positions,
-                        rotations,
-                        velocities,
-                        rot_velocities, 
-                        heights,
-                        up_dir), idx 
-
-    @staticmethod
-    def extract_pd_targets_np(obs, idx) -> (PDTargets, int):
-        rotations = np.zeros((NUM_BONES, 4))
-        rot_velocities = np.zeros((NUM_BONES, 3))
-        # rotations_two_axis_form: List[np.ndarray] = np.zeros((NUM_BONES, 6))
-        for i in range(NUM_BONES):
-            rotations[i] = obs[idx:idx+4]
-            idx += 4
-            rot_velocities[i] = obs[idx:idx+3]
-            idx += 3
-        return PDTargets(rotations, rot_velocities), idx 
     
     @staticmethod
-    def parse_supertrack_data_field(inputs: List[torch.Tensor]) -> AgentBuffer:
+    def parse_supertrack_data_field(inputs: List[Union[torch.tensor, np.ndarray]]) -> AgentBuffer:
         if len(inputs) != 1:
-            raise Exception(f"SupertrackUtils.add_supertrack_data_field expected inputs to be of len 1, got {len(inputs)}")
+            raise Exception(f"SupertrackUtils.parse_supertrack_data_field expected inputs to be of len 1, got {len(inputs)}")
         obs = inputs[0]
         idx = 0
-        sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx)
+        use_tensor = torch.is_tensor(obs) 
+        sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor)
         # Extract kin char state
-        kin_char_state, idx = SupertrackUtils.extract_char_state(obs, idx)
+        kin_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor)
         # Extract pre_targets
-        pre_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx)
+        pre_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor)
         # Extract post_targets
-        post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx)
+        post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor)
         if idx != TOTAL_OBS_LEN:
             raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
         return SuperTrackDataField(
@@ -239,6 +195,7 @@ class SupertrackUtils:
             kin_char_state=kin_char_state,
             pre_targets=pre_targets,
             post_targets=post_targets)
+    
 
     @staticmethod
     def add_supertrack_data_field_OLD(agent_buffer_trajectory: AgentBuffer) -> AgentBuffer:
@@ -248,23 +205,7 @@ class SupertrackUtils:
             if (len(obs) != TOTAL_OBS_LEN):
                 raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
             # print(f"Obs at idx {agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ][i]} : {obs}")
-            # Extract sim char state
-            idx = 0
-            sim_char_state, idx = SupertrackUtils.extract_char_state_np(obs, idx)
-            # Extract kin char state
-            kin_char_state, idx = SupertrackUtils.extract_char_state_np(obs, idx)
-            # Extract pre_targets
-            pre_targets, idx = SupertrackUtils.extract_pd_targets_np(obs, idx)
-            # Extract post_targets
-            post_targets, idx = SupertrackUtils.extract_pd_targets_np(obs, idx)
-            if idx != TOTAL_OBS_LEN:
-                raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
-            supertrack_data.append(
-                SuperTrackDataField(
-                sim_char_state=sim_char_state, 
-                kin_char_state=kin_char_state,
-                pre_targets=pre_targets,
-                post_targets=post_targets))
+            supertrack_data.append(SupertrackUtils.parse_supertrack_data_field([obs]))
         agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA] = supertrack_data
     
     @staticmethod
@@ -293,7 +234,7 @@ class SupertrackUtils:
         mask = norms < epsilon
         
         # Create a tensor of identity quaternions
-        identity_quaternion = torch.tensor([1.0, 0.0, 0.0, 0.0], device=default_device())
+        identity_quaternion = torch.tensor([1.0, 0.0, 0.0, 0.0], device=quaternions.device)
         
         # Use torch.where to replace the quaternions with identity
         result = torch.where(mask, identity_quaternion, quaternions)
@@ -309,7 +250,6 @@ class SupertrackUtils:
             cur_rot_vels: torch.Tensor, # shape [batch_size, num_bones, 3]
             cur_heights: torch.Tensor, # shape [batch_size, num_bones]
             cur_up_dir: torch.Tensor): # shape [batch_size, 3]
-        
         B = cur_pos.shape[0] # batch_size
         root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
         inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]

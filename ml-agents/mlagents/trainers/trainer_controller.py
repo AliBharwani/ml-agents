@@ -338,7 +338,7 @@ class TrainerController:
             try:
                 trainer._initialize()
             except Exception as e:
-                print("Failed to initialize trainer")
+                print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
         while not self.kill_trainers:
             with hierarchical_timer("trainer_advance"):
                 trainer.advance()

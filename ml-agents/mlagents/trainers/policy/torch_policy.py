@@ -1,4 +1,5 @@
 import pdb
+from tkinter import SEL
 from typing import Any, Dict, List
 import numpy as np
 from mlagents.torch_utils import torch, default_device
@@ -26,6 +27,7 @@ class TorchPolicy(Policy):
         network_settings: NetworkSettings,
         actor_cls: type,
         actor_kwargs: Dict[str, Any],
+        split_on_cpugpu: bool = False,
     ):
         """
         Policy that uses a multilayer perceptron to map the observations to actions. Could
@@ -46,21 +48,38 @@ class TorchPolicy(Policy):
             "Losses/Value Loss": "value_loss",
             "Losses/Policy Loss": "policy_loss",
         }
+        self.split_on_cpugpu = split_on_cpugpu
 
-        self.actor = actor_cls(
-            observation_specs=self.behavior_spec.observation_specs,
-            network_settings=network_settings,
-            action_spec=behavior_spec.action_spec,
-            **actor_kwargs,
-        )
+        if split_on_cpugpu:
+            self.actor_cpu = actor_cls(
+                observation_specs=self.behavior_spec.observation_specs,
+                network_settings=network_settings,
+                action_spec=behavior_spec.action_spec,
+                **actor_kwargs,
+            )
+            self.actor_cpu.to("cpu")
+            self.actor_cpu.share_memory()
+            self.actor = self.actor_cpu
+        else:
+            self.actor = actor_cls(
+                observation_specs=self.behavior_spec.observation_specs,
+                network_settings=network_settings,
+                action_spec=behavior_spec.action_spec,
+                **actor_kwargs,
+            )
+            self.actor.to(default_device())
 
         # Save the m_size needed for export
         self._export_m_size = self.m_size
         # m_size needed for training is determined by network, not trainer settings
         self.m_size = self.actor.memory_size
 
-        self.actor.to(default_device())
 
+    # def create_gpu_actor(self):
+    #     self.actor_gpu = copy.deepcopy(self.actor_cpu)
+    #     self.actor_gpu.to("cuda")
+    #     self.actor_gpu.train()
+        
     @property
     def export_memory_size(self) -> int:
         """
@@ -92,7 +111,9 @@ class TorchPolicy(Policy):
         """
         obs = decision_requests.obs
         masks = self._extract_masks(decision_requests)
-        tensor_obs = [torch.as_tensor(np_ob) for np_ob in obs]
+        # If we're split on cpugpu, we want to run env actions on the cpu
+        device = "cpu" if self.split_on_cpugpu else None
+        tensor_obs = [torch.as_tensor(np_ob, device=device) for np_ob in obs]
 
         memories = torch.as_tensor(self.retrieve_memories(global_agent_ids)).unsqueeze(
             0
