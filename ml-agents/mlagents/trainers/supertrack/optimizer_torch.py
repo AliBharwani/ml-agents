@@ -78,13 +78,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_optimizer = torch.optim.Adam(params, lr=self.policy_lr)
 
     def check_wm_layernorm(self, print_on_true : str = None):
-        # cur_thread_name = threading.current_thread().name
-        # print(f"Called from thread: {cur_thread_name} - message: {print_on_true}")
-        # if self.init_thread_name != cur_thread_name:
-        #     print(f"Called from thread: {cur_thread_name}, but initialized on thread: {self.init_thread_name}")
-        #     # Print stack trace
-        #     traceback.print_exc()
-        #     pdb.set_trace()
         try: 
             for layer in self._world_model.layers:
                 if isinstance(layer, nn.LayerNorm):
@@ -93,8 +86,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                         print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
                         # pdb.set_trace()
         except Exception as e:
-            pass
-            # print(f"Exception in check_wm_layernorm at {print_on_true}: {e}") 
+            print(f"Exception in check_wm_layernorm at {print_on_true}: {e}") 
 
     @timed
     def update_world_model(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
@@ -482,6 +474,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         At this moment, torch.onnx.export() doesn't accept None as tensor to be exported,
         so the size of return tuple varies with action spec.
         """
+        print(f"Inputs device: {inputs[0].device}, params device: {next(self.parameters()).device}")
         encoding = self.network_body(inputs[0])
 
         (

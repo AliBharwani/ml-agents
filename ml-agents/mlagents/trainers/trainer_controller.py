@@ -176,10 +176,6 @@ class TrainerController:
                 trainerthread.start()
             if trainerprocess is not None: 
                 trainerprocess.start()
-            try: 
-                trainer.optimizer.check_wm_layernorm("On trainer thread start")
-            except:
-                print("Failed to check wm layernorm on trainer thread start")
             
 
     def _create_trainers_and_managers(

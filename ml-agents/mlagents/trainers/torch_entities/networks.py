@@ -743,10 +743,10 @@ class SharedActorCritic(SimpleActor, Critic):
 
 
 class GlobalSteps(nn.Module):
-    def __init__(self):
+    def __init__(self, device = None):
         super().__init__()
         self.__global_step = nn.Parameter(
-            torch.Tensor([0]).to(torch.int64), requires_grad=False
+            torch.tensor([0], device=device).to(torch.int64), requires_grad=False, 
         )
 
     @property

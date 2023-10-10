@@ -91,6 +91,7 @@ class ModelSerializer:
         # Any multi-dimentional input should follow that otherwise will
         # cause problem to barracuda import.
         self.policy = policy
+        self.split_on_cpugpu = policy.split_on_cpugpu
         # MY TODO: Change to Policy Network settings input size
         observation_specs = self.policy.behavior_spec.observation_specs
         policy_network_settings : NetworkSettings = policy.network_settings
@@ -100,22 +101,23 @@ class ModelSerializer:
         num_obs = len(observation_specs)
 
         policy_input_setting = policy_network_settings.input_size
+        device = "cpu" if self.split_on_cpugpu else None
         if policy_input_setting == -1:
             dummy_obs = [
                 torch.zeros(
-                    batch_dim + list(ModelSerializer._get_onnx_shape(obs_spec.shape))
+                    batch_dim + list(ModelSerializer._get_onnx_shape(obs_spec.shape)), device=device
                 )
                 for obs_spec in observation_specs
             ]
         else:
             print("Serializing policy based on yaml file input_size, not BehaviorSpec obs shape")
-            dummy_obs = torch.zeros(batch_dim + [policy_input_setting])
+            dummy_obs = torch.zeros(batch_dim + [policy_input_setting], device=device )
 
         dummy_masks = torch.ones(
-            batch_dim + [sum(self.policy.behavior_spec.action_spec.discrete_branches)]
+            batch_dim + [sum(self.policy.behavior_spec.action_spec.discrete_branches)], device=device
         )
         dummy_memories = torch.zeros(
-            batch_dim + seq_len_dim + [self.policy.export_memory_size]
+            batch_dim + seq_len_dim + [self.policy.export_memory_size], device=device
         )
 
         self.dummy_input = (dummy_obs, dummy_masks, dummy_memories)

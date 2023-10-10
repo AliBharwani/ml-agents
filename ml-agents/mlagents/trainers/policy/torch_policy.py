@@ -40,33 +40,26 @@ class TorchPolicy(Policy):
         :param actor_kwargs: Keyword args for the Actor class
         """
         super().__init__(seed, behavior_spec, network_settings)
+        self.split_on_cpugpu = split_on_cpugpu
+        device = "cpu" if split_on_cpugpu else None
         self.global_step = (
-            GlobalSteps()
+            GlobalSteps(device=device)
         )  # could be much simpler if TorchPolicy is nn.Module
 
         self.stats_name_to_update_name = {
             "Losses/Value Loss": "value_loss",
             "Losses/Policy Loss": "policy_loss",
         }
-        self.split_on_cpugpu = split_on_cpugpu
-
+        self.actor = actor_cls(
+            observation_specs=self.behavior_spec.observation_specs,
+            network_settings=network_settings,
+            action_spec=behavior_spec.action_spec,
+            **actor_kwargs,
+        )
         if split_on_cpugpu:
-            self.actor_cpu = actor_cls(
-                observation_specs=self.behavior_spec.observation_specs,
-                network_settings=network_settings,
-                action_spec=behavior_spec.action_spec,
-                **actor_kwargs,
-            )
-            self.actor_cpu.to("cpu")
-            self.actor_cpu.share_memory()
-            self.actor = self.actor_cpu
+            self.actor.to("cpu")
+            self.actor.share_memory()
         else:
-            self.actor = actor_cls(
-                observation_specs=self.behavior_spec.observation_specs,
-                network_settings=network_settings,
-                action_spec=behavior_spec.action_spec,
-                **actor_kwargs,
-            )
             self.actor.to(default_device())
 
         # Save the m_size needed for export

@@ -105,7 +105,7 @@ class SuperTrackTrainer(RLTrainer):
 
     def _initialize(self):
         self.optimizer._init_world_model()
-        self.actor_gpu = copy.deepcopy(self.policy.actor_cpu)
+        self.actor_gpu = copy.deepcopy(self.policy.actor)
         self.actor_gpu.to("cuda")
         self.actor_gpu.train()
         self.optimizer.actor_gpu = self.actor_gpu
