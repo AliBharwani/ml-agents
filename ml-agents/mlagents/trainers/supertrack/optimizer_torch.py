@@ -377,7 +377,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         for param in self._world_model.parameters():
             param.requires_grad = True
 
-        # MYTODO : COPY POLICY TO GPU 
+        # copy policy to cpu 
+        if self.split_actor_devices:
+            self.policy.actor.load_state_dict(self.actor_gpu.state_dict())
         return update_stats
 
 
