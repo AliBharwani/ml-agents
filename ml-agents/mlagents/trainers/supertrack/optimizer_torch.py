@@ -169,14 +169,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         raw_pos_l = torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2)))
         raw_vel_l = torch.mean(torch.sum(torch.abs(vel1-vel2), dim =(1,2)))
         raw_rvel_l = torch.mean(torch.sum(torch.abs(rvel1-rvel2), dim =(1,2)))
-        # quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
-        # mat_diffs = pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)
-        # raw_rot_l = torch.mean(torch.sum(torch.abs(pyt.so3_rotation_angle(mat_diffs))))
         quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
-        # batch_size, num_bones, _ = quat_diffs.shape
-        # quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, num_bones, 3)
-        # raw_rot_l = torch.mean(torch.sum(torch.abs(quat_logs), dim=(1,2)))
-        raw_rot_l = torch.mean(torch.sum(torch.abs(quat_diffs), dim=(1,2)))
+        batch_size, num_bones, _ = quat_diffs.shape
+        quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, num_bones, 3)
+        raw_rot_l = torch.mean(torch.sum(torch.abs(quat_logs), dim=(1,2)))
         # print(raw_rot_l)
         # Make sure they all contribute equally to the total loss
         # total_loss = raw_pos_l + raw_vel_l + raw_rvel_l + raw_rot_l 

@@ -109,7 +109,7 @@ class SuperTrackTrainer(RLTrainer):
         self.model_saver.register(self.policy)
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
-        
+
         if self.split_actor_devices:
             actor_gpu = copy.deepcopy(self.policy.actor)
             actor_gpu.to("cuda")
@@ -289,7 +289,6 @@ class SuperTrackTrainer(RLTrainer):
         :param behavior_spec: specifications for policy construction
         :return policy
         """
-        # actor_cls = SimpleActor
         actor_cls = SuperTrackPolicyNetwork
         actor_kwargs = {"conditional_sigma": True, "tanh_squash": True}
 
