@@ -271,7 +271,7 @@ class SuperTrackTrainer(RLTrainer):
         self.optimizer.check_wm_layernorm(f"Processing trajectory!")
         super()._process_trajectory(trajectory)
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-        SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory)
+        # SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory)
         self._append_to_update_buffer(agent_buffer_trajectory)
 
     def create_optimizer(self) -> TorchOptimizer:

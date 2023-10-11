@@ -13,6 +13,7 @@ from mlagents.trainers.buffer import AgentBuffer, AgentBufferField, BufferKey, O
 import pytorch3d.transforms as pyt
 
 import numpy as np
+from mlagents.trainers.torch_entities.utils import ModelUtils
 
 from mlagents_envs.timers import timed
 
@@ -66,6 +67,14 @@ class CharState():
     @functools.cached_property
     def values(self):
         return self.positions, self.rotations, self.velocities, self.rot_velocities, self.heights, self.up_dir
+    
+    def to_numpy(self):
+        self.positions = ModelUtils.to_numpy(self.positions)
+        self.rotations = ModelUtils.to_numpy(self.rotations)
+        self.velocities = ModelUtils.to_numpy(self.velocities)
+        self.rot_velocities = ModelUtils.to_numpy(self.rot_velocities)
+        self.heights = ModelUtils.to_numpy(self.heights)
+        self.up_dir = ModelUtils.to_numpy(self.up_dir)
 
     
 @dataclass
@@ -82,6 +91,10 @@ class PDTargets():
     @functools.cached_property
     def values(self):
         return self.rotations, self.rot_velocities
+    
+    def to_numpy(self):
+        self.rotations = ModelUtils.to_numpy(self.rotations)
+        self.rot_velocities = ModelUtils.to_numpy(self.rot_velocities)
 
 
 @dataclass
@@ -90,6 +103,12 @@ class SuperTrackDataField():
     kin_char_state: CharState
     pre_targets: PDTargets
     post_targets: PDTargets
+
+    def convert_to_numpy(self):
+        self.sim_char_state.to_numpy()
+        self.kin_char_state.to_numpy()
+        self.pre_targets.to_numpy()
+        self.post_targets.to_numpy()
     
 class SupertrackUtils:
 

@@ -526,7 +526,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         deterministic=False,
         inputs_already_formatted=False,
         return_means=False,
-        use_cpu = False,
     ) -> Tuple[AgentAction, Dict[str, Any], torch.Tensor]:
         """
         Returns sampled actions.
@@ -538,7 +537,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :param deterministic: Whether to use deterministic actions.
         :param inputs_already_formatted: Whether the inputs are already formatted.
         :param return_means: Whether to return the means of the action distribution.
-        :param use_cpu: Whether to use CPU for inference. Implies that inputs are List[np.ndarray].
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """
@@ -566,7 +564,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
-        # run_out["supertrack_data"] = supertrack_data
+        run_out["supertrack_data"] = supertrack_data
         if return_means:
             run_out["means"] = means
         run_out["log_probs"] = log_probs
