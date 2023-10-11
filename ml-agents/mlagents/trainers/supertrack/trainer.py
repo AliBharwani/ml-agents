@@ -242,7 +242,7 @@ class SuperTrackTrainer(RLTrainer):
                 policy_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size, self.policy_window)
 
                 update_stats = self.optimizer.update_world_model(world_model_minibatch, self.batch_size, self.wm_window)
-                # update_stats.update(self.optimizer.update_policy(policy_minibatch, self.hyperparameters.batch_size, self.policy_window))
+                update_stats.update(self.optimizer.update_policy(policy_minibatch, self.hyperparameters.batch_size, self.policy_window))
                 for stat_name, value in update_stats.items():
                     batch_update_stats[stat_name].append(value)
 

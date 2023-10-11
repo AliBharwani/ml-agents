@@ -249,22 +249,31 @@ class SupertrackUtils:
             cur_vels: torch.Tensor,   # shape [batch_size, num_bones, 3]
             cur_rot_vels: torch.Tensor, # shape [batch_size, num_bones, 3]
             cur_heights: torch.Tensor, # shape [batch_size, num_bones]
-            cur_up_dir: torch.Tensor): # shape [batch_size, 3]
+            cur_up_dir: torch.Tensor, # shape [batch_size, 3]
+            rots_as_twoaxis: bool = True,
+            unzip_to_batchsize: bool = True,
+            ): 
         B = cur_pos.shape[0] # batch_size
         root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
         inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
         local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
         local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_t_bones, 4]
-        two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
+        if rots_as_twoaxis:
+            return_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
+        else:
+            return_rots = local_rots
+        # two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
 
-        # return_tensors = [local_pos, two_axis_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
-        return_tensors = [(local_pos, 'local_pos'), (two_axis_rots, 'two_axis_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
+        return_tensors = [local_pos, return_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
+        # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
         # Have to reshape instead of view because stride can be messed up in some cases
         # return [tensor.reshape(B, -1) for tensor in return_tensors]
         # for tensor, name in return_tensors:
         #     print(f"{name} dtype: {tensor.dtype}")
-        return [tensor.reshape(B, -1) for tensor, name in return_tensors]
-
+        if unzip_to_batchsize:
+            return [t.reshape(B, -1) for t in return_tensors]
+        else:
+            return [t for t in return_tensors]
         

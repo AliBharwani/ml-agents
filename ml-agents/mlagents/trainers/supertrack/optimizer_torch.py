@@ -169,7 +169,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         raw_pos_l = torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2)))
         raw_vel_l = torch.mean(torch.sum(torch.abs(vel1-vel2), dim =(1,2)))
         raw_rvel_l = torch.mean(torch.sum(torch.abs(rvel1-rvel2), dim =(1,2)))
-        quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
+        # quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
+        quat_diffs = pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2))
         batch_size, num_bones, _ = quat_diffs.shape
         quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, num_bones, 3)
         raw_rot_l = torch.mean(torch.sum(torch.abs(quat_logs), dim=(1,2)))
@@ -229,7 +230,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         rvels = rvels + rot_accel*self.dtime
 
         pos = pos + vels*self.dtime
-        rots_before = rots.clone().detach()
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*self.dtime) , rots)
         avg_quat_norm = torch.mean(torch.norm(rots, p=2, dim=-1))
         # print(f"Average norm for quaternions: {avg_quat_norm}")
@@ -237,7 +237,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         if math.isclose(avg_quat_norm, 0):
             print("Quat norm is 0!")
             pdb.set_trace()
-        # rots = SupertrackUtils.normalize_quat(rots)
         nans = [torch.isnan(t).any() for t in [pos, rots, vels, rvels]]
         if any(nans):
             print("Nan in world model integration!")
@@ -269,7 +268,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
         hn = lambda x : torch.isnan(x).any()
         loss = lpos = lvel = lrot = lang = lreg = lsreg = 0
-        self.policy.actor.train()
+        cur_actor = self.policy.actor
+        if self.split_actor_devices:
+            cur_actor = self.actor_gpu
+        cur_actor.train()
         self._world_model.eval()
         for param in self._world_model.parameters():
             param.requires_grad = False
@@ -285,7 +287,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                 print(f"Input has nan! i: {i}")
                 [print(hn(t)) for t in [*local_kin, *local_sim]]
                 pdb.set_trace()
-            action, runout, _ = self.policy.actor.get_action_and_stats([input], inputs_already_formatted=True)
+
+            action, runout, _ = cur_actor.get_action_and_stats([input], inputs_already_formatted=True, return_means=True)
             means = runout['means']
             output = action.continuous_tensor.reshape(batch_size, NUM_T_BONES, 3)
             # output = SupertrackUtils.convert_actions_to_quat(output, self.offset_scale)
@@ -315,14 +318,36 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             kinematic states K is then computed in the local space, and the
             losses used to update the weights of the policy
             """
-            step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(cur_spos[:, 1:, :], 
-                                    k_pos[:, i+1, 1:, :],
-                                    cur_srots[:, 1:, :],
-                                    k_rots[:, i+1, 1:, :],
-                                    cur_svels[:, 1:, :], 
-                                    k_vels[:, i+1, 1:, :], 
-                                    cur_srvels[:, 1:, :], 
-                                    k_rvels[:, i+1, 1:, :])
+            sim_state = [cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...]] 
+            local_spos, local_srots, local_svels, local_srvels, _, _ = SupertrackUtils.local(*[t.clone() for t  in sim_state], rots_as_twoaxis=False, unzip_to_batchsize=False)
+            # local_spos, local_srots, local_svels, local_srvels, _, _ = SupertrackUtils.local(cur_spos.clone, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...], rots_as_twoaxis=False, unzip_to_batchsize=False)
+            next_frame_kin = [k_pos[:, i+1, ...], k_rots[:, i+1, ...], k_vels[:, i+1, ...], k_rvels[:, i+1, ...], k_h[:, i+1, ...], k_up[:, i+1, ...]]
+            local_kpos, local_krots, local_kvels, local_krvels, _, _ = SupertrackUtils.local(*[t.clone().detach() for t in next_frame_kin], rots_as_twoaxis=False, unzip_to_batchsize=False)
+            # local_kpos, local_krots, local_kvels, local_krvels, _, _ = SupertrackUtils.local(k_pos[:, i+1, ...], k_rots[:, i+1, ...], k_vels[:, i+1, ...], k_rvels[:, i+1, ...], k_h[:, i+1, ...], k_up[:, i+1, ...], rots_as_twoaxis=False, unzip_to_batchsize=False)
+            # step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(cur_spos[:, 1:, :], 
+            #                         k_pos[:, i+1, 1:, :],
+            #                         cur_srots[:, 1:, :],
+            #                         k_rots[:, i+1, 1:, :],
+            #                         cur_svels[:, 1:, :], 
+            #                         k_vels[:, i+1, 1:, :], 
+            #                         cur_srvels[:, 1:, :], 
+            #                         k_rvels[:, i+1, 1:, :])
+            step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(local_spos, 
+                                                                            local_kpos,
+                                                                            local_srots,
+                                                                            local_krots,
+                                                                            local_svels, 
+                                                                            local_kvels, 
+                                                                            local_srvels, 
+                                                                            local_krvels)
+            # step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(local_spos, 
+            #                                                     local_spos,
+            #                                                     local_srots,
+            #                                                     local_srots,
+            #                                                     local_svels, 
+            #                                                     local_svels, 
+            #                                                     local_srvels, 
+            #                                                     local_srvels)
             loss += step_loss
             lpos += raw_losses[0]
             lvel += raw_losses[1]
@@ -351,6 +376,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self._world_model.train()
         for param in self._world_model.parameters():
             param.requires_grad = True
+
+        # MYTODO : COPY POLICY TO GPU 
         return update_stats
 
 
