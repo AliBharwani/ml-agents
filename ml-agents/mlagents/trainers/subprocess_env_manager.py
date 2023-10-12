@@ -12,7 +12,8 @@ from mlagents_envs.exception import (
     UnityEnvironmentException,
     UnityCommunicatorStoppedException,
 )
-from multiprocessing import Process, Pipe, Queue
+# from multiprocessing import Process, Pipe, Queue
+from torch.multiprocessing import Process, Pipe, Queue
 from multiprocessing.connection import Connection
 from queue import Empty as EmptyQueueException
 from mlagents_envs.base_env import BaseEnv, BehaviorName, BehaviorSpec
@@ -79,7 +80,8 @@ class StepResponse(NamedTuple):
 
 
 class UnityEnvWorker:
-    def __init__(self, process: Process, worker_id: int, conn: Connection):
+    # def __init__(self, process: Process, worker_id: int, conn: Connection):
+    def __init__(self, process: Process, worker_id: int, conn):
         self.process = process
         self.worker_id = worker_id
         self.conn = conn
@@ -116,7 +118,8 @@ class UnityEnvWorker:
 
 
 def worker(
-    parent_conn: Connection,
+    # parent_conn: Connection,
+    parent_conn,
     step_queue: Queue,
     pickled_env_factory: str,
     worker_id: int,

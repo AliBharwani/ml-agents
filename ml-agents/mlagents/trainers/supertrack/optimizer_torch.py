@@ -46,7 +46,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
         super().__init__(policy, trainer_settings)
         self.trainer_settings = trainer_settings
-        self.init_thread_name = threading.current_thread().name
         print(f"TorchSuperTrackOptimizer is on thread: {threading.current_thread().name}")
 
         self.hyperparameters: SuperTrackSettings = cast(
@@ -56,7 +55,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.wm_lr = trainer_settings.world_model_network_settings.learning_rate
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
         self.first_update = True
-        self.split_actor_devices = self.trainer_settings.split_actor_devices
+        self.split_actor_devices = self.trainer_settings.use_pytorch_mp
         self.actor_gpu = None
         self.policy_optimizer = torch.optim.Adam(self.policy.actor.parameters(), lr=self.policy_lr)
 
@@ -67,9 +66,12 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self._world_model = WorldModelNetwork(
             self.trainer_settings.world_model_network_settings
         )
+        # self._world_model.to("cpu")
         self._world_model.to(default_device())
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self._world_model.train()
+        print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
+        self.check_wm_layernorm("On init world model")
 
     def set_actor_gpu_to_optimizer(self):
         policy_optimizer_state = self.policy_optimizer.state_dict()
@@ -81,9 +83,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             for layer in self._world_model.layers:
                 if isinstance(layer, nn.LayerNorm):
                     if torch.allclose(layer.weight, torch.zeros_like(layer.weight)):
-                        print(f"Layer norm weight is 0! at: {print_on_true}")
+                        print(f"Layer norm weight is 0! at: {print_on_true} ")
                         print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
-                        # pdb.set_trace()
+                        pdb.set_trace()
         except Exception as e:
             print(f"Exception in check_wm_layernorm at {print_on_true}: {e}") 
 
@@ -121,8 +123,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         wpos_loss = wvel_loss = wang_loss = wrot_loss = 0
         for i in range(raw_window_size):
             self.check_wm_layernorm(f"{i}")
-            cur_heights = heights[:, i, ...]
-            cur_up_dir = up_dir[:, i, ...]
+            cur_heights = heights[:, i, ...].clone().detach()
+            cur_up_dir = up_dir[:, i, ...].clone().detach()
             # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
             cur_pos[:, 0, :] = positions[:, i, 0, :].clone().detach()
             cur_rots[:, 0, :] = rotations[:, i , 0, :].clone().detach()
@@ -278,8 +280,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         for i in range(raw_window_size):
             local_kin = SupertrackUtils.local(k_pos[:, i, ...], k_rots[:, i, ...], k_vels[:, i, ...], k_rvels[:, i, ...], k_h[:, i, ...], k_up[:, i, ...])
             # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
-            cur_spos[:, 0, :] = s_pos[:, i, 0, :]
-            cur_srots[:, 0, :] = s_rots[:, i , 0, :]
+            cur_spos[:, 0, :] = s_pos[:, i, 0, :].clone().detach()
+            cur_srots[:, 0, :] = s_rots[:, i , 0, :].clone().detach()
             local_sim = SupertrackUtils.local(cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...])
             # Predict PD offsets
             input = torch.cat((*local_kin, *local_sim), dim=-1)
@@ -564,7 +566,9 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
-        run_out["supertrack_data"] = supertrack_data
+        if supertrack_data is not None:
+            # supertrack_data.convert_to_numpy()
+            run_out["supertrack_data"] = supertrack_data
         if return_means:
             run_out["means"] = means
         run_out["log_probs"] = log_probs

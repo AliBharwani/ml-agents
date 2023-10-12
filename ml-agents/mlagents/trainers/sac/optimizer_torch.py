@@ -242,13 +242,6 @@ class TorchSACOptimizer(TorchOptimizer):
         self.first_update = True
 
     def check_wm_layernorm(self, print_on_true : str = None):
-        # cur_thread_name = threading.current_thread().name
-        # print(f"Called from thread: {cur_thread_name} - message: {print_on_true}")
-        # if self.init_thread_name != cur_thread_name:
-        #     print(f"Called from thread: {cur_thread_name}, but initialized on thread: {self.init_thread_name}")
-        #     # Print stack trace
-        #     traceback.print_exc()
-        #     pdb.set_trace()
         encoder_found = False
         for layer in self._world_model.layers:
             if isinstance(layer, nn.LayerNorm):

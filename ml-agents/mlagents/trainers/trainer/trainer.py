@@ -39,6 +39,7 @@ class Trainer(abc.ABC):
         self.brain_name = brain_name
         self.trainer_settings = trainer_settings
         self._threaded = trainer_settings.threaded
+        self._multiprocess = trainer_settings.use_pytorch_mp
         self._stats_reporter = StatsReporter(brain_name)
         self.is_training = training
         self.load = load
@@ -88,6 +89,13 @@ class Trainer(abc.ABC):
         enforce strict on-policy updates (i.e. don't update the policy when taking steps.)
         """
         return self._threaded
+    
+    @property
+    def multiprocess(self) -> bool:
+        """
+        Whether or not to run the trainer in a separate PyTorch process
+        """
+        return self._multiprocess
 
     @property
     def should_still_train(self) -> bool:

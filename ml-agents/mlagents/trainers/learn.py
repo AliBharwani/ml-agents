@@ -9,6 +9,7 @@ import json
 from typing import Callable, Optional, List
 
 import mlagents.trainers
+from mlagents.trainers import simple_env_manager
 import mlagents_envs
 from mlagents.trainers.trainer_controller import TrainerController
 from mlagents.trainers.environment_parameter_manager import EnvironmentParameterManager
@@ -105,7 +106,7 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
             env_settings.env_args,
             os.path.abspath(run_logs_dir),  # Unity environment requires absolute path
         )
-
+        # env_manager = simple_env_manager.SimpleEnvManager(env_factory(0, []), options)
         env_manager = SubprocessEnvManager(env_factory, options, env_settings.num_envs)
         env_parameter_manager = EnvironmentParameterManager(
             options.environment_parameters, run_seed, restore=checkpoint_settings.resume

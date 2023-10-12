@@ -1,7 +1,7 @@
 import grpc
 from typing import Optional
 
-from multiprocessing import Pipe
+from torch.multiprocessing import Pipe
 from sys import platform
 import socket
 import time

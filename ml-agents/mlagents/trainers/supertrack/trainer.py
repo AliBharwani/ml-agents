@@ -100,7 +100,8 @@ class SuperTrackTrainer(RLTrainer):
         self.effective_wm_window = self.wm_window + 1 # we include an extra piece of dating during training to simplify code
         self.effective_policy_window = self.policy_window + 1 
         self.batch_size = self.hyperparameters.batch_size
-        self.split_actor_devices = self.trainer_settings.split_actor_devices
+        self.wm_batch_size = self.trainer_settings.world_model_network_settings.batch_size
+        self.policy_batch_size = self.trainer_settings.policy_network_settings.batch_size
 
 
     def _initialize(self):
@@ -110,7 +111,7 @@ class SuperTrackTrainer(RLTrainer):
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
 
-        if self.split_actor_devices:
+        if self.multiprocess:
             actor_gpu = copy.deepcopy(self.policy.actor)
             actor_gpu.to("cuda")
             actor_gpu.train()
@@ -186,9 +187,10 @@ class SuperTrackTrainer(RLTrainer):
         Returns whether or not there is enough data in the buffer to train
         :return: A boolean corresponding to whether or not there is enough data to train
         """
+        max_data_required = max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)
         return (
             self.update_buffer.num_experiences - max(self.effective_wm_window, self.effective_policy_window)
-              >= self.batch_size * max(self.effective_wm_window, self.effective_policy_window)
+              >= max_data_required
         )
 
     def _is_ready_update(self) -> bool:
@@ -238,11 +240,11 @@ class SuperTrackTrainer(RLTrainer):
             logger.debug(f"Updating SuperTrack policy at step {self._step}")
             buffer = self.update_buffer
             if self._has_enough_data_to_train():
-                world_model_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size,self.wm_window)
-                policy_minibatch = buffer.supertrack_sample_mini_batch(self.batch_size, self.policy_window)
+                world_model_minibatch = buffer.supertrack_sample_mini_batch(self.wm_batch_size,self.wm_window)
+                policy_minibatch = buffer.supertrack_sample_mini_batch(self.policy_batch_size, self.policy_window)
 
-                update_stats = self.optimizer.update_world_model(world_model_minibatch, self.batch_size, self.wm_window)
-                update_stats.update(self.optimizer.update_policy(policy_minibatch, self.hyperparameters.batch_size, self.policy_window))
+                update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_batch_size, self.wm_window)
+                update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window))
                 for stat_name, value in update_stats.items():
                     batch_update_stats[stat_name].append(value)
 
@@ -251,7 +253,7 @@ class SuperTrackTrainer(RLTrainer):
                 self.update_steps += 1
                 has_updated = True
             else:
-                raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {self.hyperparameters.batch_size  * max(self.effective_wm_window, self.effective_policy_window)} to update")
+                raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
         if has_updated:
             print(f"Update steps: {self.update_steps}")
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
@@ -271,7 +273,8 @@ class SuperTrackTrainer(RLTrainer):
         self.optimizer.check_wm_layernorm(f"Processing trajectory!")
         super()._process_trajectory(trajectory)
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-        # SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory)
+        if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
+            SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory)
         self._append_to_update_buffer(agent_buffer_trajectory)
 
     def create_optimizer(self) -> TorchOptimizer:
@@ -298,7 +301,7 @@ class SuperTrackTrainer(RLTrainer):
             self.trainer_settings.policy_network_settings,
             actor_cls,
             actor_kwargs,
-            split_on_cpugpu=self.split_actor_devices,
+            split_on_cpugpu=self.multiprocess,
         )
         self.maybe_load_replay_buffer()
         return policy

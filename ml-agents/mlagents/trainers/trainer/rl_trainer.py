@@ -283,6 +283,7 @@ class RLTrainer(Trainer):
         Steps the trainer, taking in trajectories and updates if ready.
         Will block and wait briefly if there are no trajectories.
         """
+        self.optimizer.check_wm_layernorm(f"On RLTrainer advance call")
         with hierarchical_timer("process_trajectory"):
             for traj_queue in self.trajectory_queues:
                 # We grab at most the maximum length of the queue.
@@ -296,7 +297,7 @@ class RLTrainer(Trainer):
                         self._process_trajectory(t)
                     except AgentManagerQueue.Empty:
                         break
-                if self.threaded and not _queried:
+                if (self.threaded or self.multiprocess) and not _queried:
                     # Yield thread to avoid busy-waiting
                     time.sleep(0.0001)
         if self.should_still_train:
@@ -304,6 +305,6 @@ class RLTrainer(Trainer):
                 with hierarchical_timer("_update_policy"):
                     if self._update_policy():
                         for q in self.policy_queues:
-                            print(f"Getting policy queue")
+                            # print(f"Getting policy queue")
                             # Get policies that correspond to the policy queue in question
                             q.put(self.get_policy(q.behavior_id))

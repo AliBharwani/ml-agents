@@ -70,6 +70,8 @@ class TrainerController:
         torch_utils.torch.manual_seed(training_seed)
         self.rank = get_rank()
 
+        self.first_update = True
+
 
     @timed
     def _save_models(self):
@@ -131,15 +133,17 @@ class TrainerController:
             self.trainers[brain_name] = trainer
             if trainer.threaded:
                 # Only create trainer thread for new trainers
-                if not self.use_mp:
-                    trainerthread = threading.Thread(
-                        target=self.trainer_update_func, args=(trainer,), daemon=True
-                    )
-                    self.trainer_threads.append(trainerthread)
-                else:
-                    run_init = trainer.get_trainer_name() == "supertrack" 
-                    trainerprocess = mp.Process(target=self.trainer_update_func, args=(trainer,), kwargs={"run_initialize_function":run_init,}, daemon=True)
-                    self.trainer_processes.append(trainerprocess)
+                trainerthread = threading.Thread(
+                    target=self.trainer_update_func, args=(trainer,), daemon=True
+                )
+                self.trainer_threads.append(trainerthread)
+            elif trainer.multiprocess:
+                run_init = trainer.get_trainer_name() == "supertrack" 
+                trainerprocess = mp.Process(target=self.trainer_update_func, args=(trainer,), kwargs={"run_initialize_function":run_init,}, daemon=True)
+                self.trainer_processes.append(trainerprocess)
+            else:
+                print(f"Running trainer on same thread & process as env manager")
+                
             env_manager.on_training_started(
                 brain_name, self.trainer_factory.trainer_config[brain_name]
             )
@@ -149,10 +153,6 @@ class TrainerController:
             env_manager.training_behaviors[name_behavior_id],
         )
         trainer.add_policy(parsed_behavior_id, policy)
-        # if self.use_mp:
-        #     trainer.policy.actor.share_memory()
-        #     if trainer.get_trainer_name() == "sac" or trainer.get_trainer_name() == "supertrack" or trainer.get_trainer_name() == "test":
-        #         trainer.optimizer._world_model.share_memory()
 
         agent_manager = AgentManager(
             policy,
@@ -176,6 +176,12 @@ class TrainerController:
                 trainerthread.start()
             if trainerprocess is not None: 
                 trainerprocess.start()
+        elif trainer.get_trainer_name() == "supertrack" : 
+            try:
+                trainer._initialize()
+            except Exception as e:
+                print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
+        trainer.optimizer.check_wm_layernorm("At the end of _create_trainer_and_manager")
             
 
     def _create_trainers_and_managers(
@@ -191,6 +197,8 @@ class TrainerController:
             # Initial reset
             self._reset_env(env_manager)
             self.param_manager.log_current_lesson()
+            for trainer in self.trainers.values():
+                trainer.optimizer.check_wm_layernorm("Before first advance call")
             while self._not_done_training():
                 n_steps = self.advance(env_manager)
                 for _ in range(n_steps):
@@ -252,8 +260,14 @@ class TrainerController:
         with hierarchical_timer("env_step"):
             new_step_infos = env_manager.get_steps()
             self._register_new_behaviors(env_manager, new_step_infos)
-            num_steps = env_manager.process_steps(new_step_infos)
+            if self.first_update:
+                for trainer in self.trainers.values():
+                    trainer.optimizer.check_wm_layernorm("Right after _register_new_behaviors")
 
+            num_steps = env_manager.process_steps(new_step_infos)
+        if self.first_update:
+            for trainer in self.trainers.values():
+                trainer.optimizer.check_wm_layernorm("env_manager.process_steps")
         # Report current lesson for each environment parameter
         for (
             param_name,
@@ -265,10 +279,14 @@ class TrainerController:
                 )
 
         for trainer in self.trainers.values():
-            if not trainer.threaded:
+            if self.first_update:
+                trainer.optimizer.check_wm_layernorm("At first advance call")
+            if not (trainer.threaded or trainer.multiprocess):
                 with hierarchical_timer("trainer_advance"):
                     trainer.advance()
 
+
+        self.first_update = False
         return num_steps
 
     def _register_new_behaviors(
@@ -294,25 +312,8 @@ class TrainerController:
         :return:
         """
         self.kill_trainers = True
-        if self.use_mp:
-            for t in self.trainer_processes:
-                try:
-                    t.join(timeout_seconds)
-                except Exception:
-                    pass
 
-            with hierarchical_timer("trainer_threads") as main_timer_node:
-                for trainer_thread in self.trainer_threads:
-                    thread_timer_stack = get_timer_stack_for_thread(trainer_thread)
-                    if thread_timer_stack:
-                        main_timer_node.merge(
-                            thread_timer_stack.root,
-                            root_name="thread_root",
-                            is_parallel=True,
-                        )
-                        merge_gauges(thread_timer_stack.gauges)
-                return
-        for t in self.trainer_threads:
+        for t in [self.trainer_threads, self.trainer_processes]:
             try:
                 t.join(timeout_seconds)
             except Exception:
@@ -328,6 +329,7 @@ class TrainerController:
                         is_parallel=True,
                     )
                     merge_gauges(thread_timer_stack.gauges)
+        
 
     def trainer_update_func(self, trainer: Trainer, run_initialize_function = False) -> None:
         if run_initialize_function:

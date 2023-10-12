@@ -306,7 +306,7 @@ class AgentProcessor:
                 for traj_queue in self._trajectory_queues:
                     traj_queue.put(trajectory)
                 self._experience_buffers[global_agent_id] = []
-                print(f"Agent {global_agent_id} terminated at: {self._episode_steps.get(global_agent_id, 0)} steps")
+                # print(f"Agent {global_agent_id} terminated at: {self._episode_steps.get(global_agent_id, 0)} steps")
             if terminated:
                 # Record episode length.
                 self._stats_reporter.add_stat(
@@ -378,7 +378,7 @@ class AgentManagerQueue(Generic[T]):
         """
         self._maxlen: int = maxlen
         if use_pytorch_mp:
-            self._queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=maxlen)
+            self._queue: torch.multiprocessing.Queue = torch.multiprocessing.Queue(maxsize=maxlen)
         else:
             self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
         self._behavior_id = behavior_id
@@ -440,7 +440,7 @@ class AgentManager(AgentProcessor):
         use_pytorch_mp: bool = False,
     ):
         super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
-        trajectory_queue_len = 20 if threaded else 0
+        trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
             self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp
         )
