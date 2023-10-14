@@ -126,23 +126,26 @@ class SupertrackUtils:
         return pyt.axis_angle_to_quaternion(actions * alpha)
         
     @staticmethod
-    def process_raw_observations_to_policy_input(st_data : SuperTrackDataField) -> torch.Tensor:
+    def process_raw_observations_to_policy_input(st_data : List[SuperTrackDataField]) -> torch.Tensor:
         # 
         """
         Take inputs directly from Unity and transform them into a form that can be used as input to the policy.
         """
-        # Local sim char state
-        sim_char_state = st_data.sim_char_state
-        sim_inputs = [t[None, ...] for t in sim_char_state.values] # Add batch dim
-        local_sim = SupertrackUtils.local(*sim_inputs)
-        # Local kin char state
-        kin_char_state = st_data.kin_char_state
-        kin_inputs = [t[None, ...] for t in kin_char_state.values] # Add batch dim
+        # Gives us a list of tensors of shape [(pos, rots, etc) of len batch_size ]
+        sim_inputs = [st_datum.sim_char_state.values for st_datum in st_data]
+        # Convert them to [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
+        sim_inputs = [torch.stack(t) for t in zip(*sim_inputs)]
+        # SupertrackUtils.local expects tensors in the shape [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
+        local_sim = SupertrackUtils.local(*sim_inputs) # Shape is now [batch_size, local sim input size]
+
+        kin_inputs = [st_datum.kin_char_state.values for st_datum in st_data]
+        kin_inputs = [torch.stack(t) for t in zip(*kin_inputs)]
         local_kin = SupertrackUtils.local(*kin_inputs)
         return torch.cat((*local_kin, *local_sim), dim=-1)
 
     @staticmethod
-    def extract_char_state(obs: Union[torch.tensor, np.ndarray], idx: int, use_tensor: bool) -> (CharState, int):
+    def extract_char_state(obs: Union[torch.tensor, np.ndarray], # obs is of shape [batch_size, TOTAL_OBS_LEN]
+                            idx: int, use_tensor: bool) -> (CharState, int):
         if use_tensor:
             positions: torch.Tensor = torch.zeros((NUM_BONES, 3), device=obs.device)
             rotations: torch.Tensor = torch.zeros((NUM_BONES, 4), device=obs.device)
@@ -177,6 +180,61 @@ class SupertrackUtils:
                         up_dir), idx 
 
     @staticmethod
+    def extract_char_state_batched(obs: Union[torch.tensor, np.ndarray], # obs is of shape [batch_size, TOTAL_OBS_LEN]
+                            idx: int, use_tensor: bool) -> (CharState, int):
+        B = obs.shape[0]
+        if use_tensor:
+            positions: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=obs.device)
+            rotations: torch.Tensor = torch.zeros((B, NUM_BONES, 4), device=obs.device)
+            velocities: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=obs.device)
+            rot_velocities: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=obs.device)
+            heights: torch.Tensor = torch.zeros(B, NUM_BONES, device=obs.device)
+        else:
+            positions: np.ndarray = np.zeros((B, NUM_BONES, 3))
+            rotations: np.ndarray = np.zeros((B, NUM_BONES, 4))
+            velocities: np.ndarray = np.zeros((B, NUM_BONES, 3))
+            rot_velocities: np.ndarray = np.zeros((B, NUM_BONES, 3))
+            heights: np.ndarray = np.zeros(B, NUM_BONES)
+
+        for i in range(NUM_BONES):
+            positions[:,i] = obs[:, idx:idx+3]
+            idx += 3
+            rotations[:,i] = obs[:, idx:idx+4]
+            idx += 4
+            velocities[:,i] = obs[:, idx:idx+3]
+            idx += 3
+            rot_velocities[:,i] = obs[:,idx:idx+3]
+            idx += 3
+            heights[:,i] = obs[:,idx]
+            idx += 1
+        up_dir = obs[:,idx:idx+3]
+        idx += 3
+        return [CharState(positions[i],
+                        rotations[i],
+                        velocities[i],
+                        rot_velocities[i], 
+                        heights[i],
+                        up_dir[i]) for i in range(B)], idx 
+    
+    @staticmethod
+    def extract_pd_targets_batched(obs: Union[torch.tensor, np.ndarray], idx, use_tensor : bool) -> (PDTargets, int):
+        # obs is of shape [batch_size, TOTAL_OBS_LEN]
+        B = obs.shape[0]
+        if use_tensor:
+            rotations = torch.zeros((B, NUM_BONES, 4), device=obs.device)
+            rot_velocities = torch.zeros((B, NUM_BONES, 3), device=obs.device)
+        else:
+            rotations = np.zeros((B, NUM_BONES, 4))
+            rot_velocities = np.zeros((B, NUM_BONES, 3))
+
+        for i in range(NUM_BONES):
+            rotations[:, i] = obs[:, idx:idx+4]
+            idx += 4
+            rot_velocities[:, i] = obs[:, idx:idx+3]
+            idx += 3
+        return [PDTargets(rotations[i], rot_velocities[i]) for i in range(B)], idx 
+
+    @staticmethod
     def extract_pd_targets(obs: Union[torch.tensor, np.ndarray], idx, use_tensor : bool) -> (PDTargets, int):
         if use_tensor:
             rotations = torch.zeros((NUM_BONES, 4), device=obs.device)
@@ -192,14 +250,36 @@ class SupertrackUtils:
             idx += 3
         return PDTargets(rotations, rot_velocities), idx 
     
+
+    @staticmethod
+    def parse_supertrack_data_field_batched(inputs: torch.tensor) -> List[SuperTrackDataField]:
+        if len(inputs.shape) != 2:
+            raise Exception(f"SupertrackUtils.parse_supertrack_data_field_batched expected inputs to be of len 2 (batch_dim, data), got {len(inputs)}")
+        use_tensor = True # torch.is_tensor(inputs) 
+        B = inputs.shape[0]
+        idx = 0
+        sim_char_state, idx = SupertrackUtils.extract_char_state_batched(inputs, idx, use_tensor)
+        # Extract kin char state
+        kin_char_state, idx = SupertrackUtils.extract_char_state_batched(inputs, idx, use_tensor)
+        # Extract pre_targets
+        pre_targets, idx = SupertrackUtils.extract_pd_targets_batched(inputs, idx, use_tensor)
+        # Extract post_targets
+        post_targets, idx = SupertrackUtils.extract_pd_targets_batched(inputs, idx, use_tensor)
+        if idx != TOTAL_OBS_LEN:
+            raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
+        return [SuperTrackDataField(
+                sim_char_state=sim_char_state[i], 
+                kin_char_state=kin_char_state[i],
+                pre_targets=pre_targets[i],
+                post_targets=post_targets[i]) for i in range(B)]
     
     @staticmethod
     def parse_supertrack_data_field(inputs: List[Union[torch.tensor, np.ndarray]]) -> AgentBuffer:
         if len(inputs) != 1:
-            raise Exception(f"SupertrackUtils.parse_supertrack_data_field expected inputs to be of len 1, got {len(inputs)}")
+            raise Exception(f"SupertrackUtils.parse_supertrack_data_field expected inputs to be of len 1 (data), got {len(inputs)}")
+        use_tensor = torch.is_tensor(inputs) 
         obs = inputs[0]
         idx = 0
-        use_tensor = torch.is_tensor(obs) 
         sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor)
         # Extract kin char state
         kin_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor)

@@ -19,6 +19,7 @@ from mlagents.trainers.torch_entities.action_model import ActionModel
 from mlagents.trainers.torch_entities.encoders import VectorInput
 from mlagents.trainers.torch_entities.layers import LinearEncoder
 from mlagents.trainers.torch_entities.networks import Actor, NetworkBody
+from mlagents.trainers.torch_entities.utils import ModelUtils
 from mlagents_envs.base_env import ActionSpec, ObservationSpec
 
 from mlagents_envs.timers import timed
@@ -546,12 +547,11 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
 
         supertrack_data = None
-        if inputs_already_formatted:
-            policy_input = inputs[0]
-        else:
-            supertrack_data = SupertrackUtils.parse_supertrack_data_field(inputs[0])
+        # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN]
+        policy_input = inputs[0]
+        if not inputs_already_formatted:
+            supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
             policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
-            # policy_input = torch.randn(1, POLICY_INPUT_LEN)
         if policy_input.shape[-1] != POLICY_INPUT_LEN:
             raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
         encoding = self.network_body(policy_input)
@@ -566,9 +566,10 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
-        if supertrack_data is not None:
-            # supertrack_data.convert_to_numpy()
-            run_out["supertrack_data"] = supertrack_data
+        # if supertrack_data is not None:
+        #     for st_datum in supertrack_data:
+        #         st_datum.convert_to_numpy()
+        #     run_out["supertrack_data"] = supertrack_data
         if return_means:
             run_out["means"] = means
         run_out["log_probs"] = log_probs

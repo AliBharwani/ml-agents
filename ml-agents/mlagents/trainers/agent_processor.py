@@ -256,7 +256,7 @@ class AgentProcessor:
 
             supertrack_data = None
             if "supertrack_data" in stored_take_action_outputs:
-                supertrack_data = stored_take_action_outputs["supertrack_data"]
+                supertrack_data = stored_take_action_outputs["supertrack_data"][idx]
 
             action_mask = stored_decision_step.action_mask
             prev_action = self.policy.retrieve_previous_action([global_agent_id])[0, :]
