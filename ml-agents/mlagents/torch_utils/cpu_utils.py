@@ -7,10 +7,9 @@ def get_num_threads_to_use() -> Optional[int]:
     """
     Gets the number of threads to use. For most problems, 4 is all you
     need, but for smaller machines, we'd like to scale to less than that.
-    By default, PyTorch uses 1/2 of the available cores.
     """
     num_cpus = _get_num_available_cpus()
-    print(f"CHANGED PYTOCH AVAILABLE CPUS TO HALF OF AVAIABLE: {num_cpus}")
+    print(f"CHANGED PYTOCH AVAILABLE CPUS TO: {num_cpus}")
     return num_cpus
 
 

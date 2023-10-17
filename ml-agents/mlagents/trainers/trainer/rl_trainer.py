@@ -214,6 +214,7 @@ class RLTrainer(Trainer):
         """
         Saves training statistics to Tensorboard.
         """
+        print(" =============== CALLING WRITE SUMMARY =========================")
         self.stats_reporter.add_stat("Is Training", float(self.should_still_train))
         self.stats_reporter.write_stats(int(step))
 
@@ -283,7 +284,6 @@ class RLTrainer(Trainer):
         Steps the trainer, taking in trajectories and updates if ready.
         Will block and wait briefly if there are no trajectories.
         """
-        self.optimizer.check_wm_layernorm(f"On RLTrainer advance call")
         with hierarchical_timer("process_trajectory"):
             for traj_queue in self.trajectory_queues:
                 # We grab at most the maximum length of the queue.

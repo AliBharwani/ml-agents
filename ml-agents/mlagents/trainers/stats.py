@@ -1,12 +1,13 @@
 from collections import defaultdict
 from enum import Enum
+import pdb
 from typing import List, Dict, NamedTuple, Any, Optional
 import numpy as np
 import abc
 import os
 import time
-from threading import RLock
-
+# from threading import RLock
+from torch.multiprocessing import RLock
 from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 
 from mlagents_envs.logging_util import get_logger
@@ -237,6 +238,7 @@ class TensorboardWriter(StatsWriter):
         self, category: str, values: Dict[str, StatsSummary], step: int
     ) -> None:
         self._maybe_create_summary_writer(category)
+        print(f"=================== Tensorboard writing stats ===================")
         for key, value in values.items():
             if key in self.hidden_keys:
                 continue
@@ -314,6 +316,7 @@ class StatsReporter:
         attached to this stat.
         """
         self.category: str = category
+        print(f"StatsReporters writers: {self.writers}")
 
     @staticmethod
     def add_writer(writer: StatsWriter) -> None:
@@ -346,6 +349,10 @@ class StatsReporter:
         :param value: the value of the statistic.
         :param aggregation: the aggregation method for the statistic, default StatsAggregationMethod.AVERAGE.
         """
+        if key != "Policy/Entropy":
+            print(f"Add stat called with: {key}, {value}")
+        # if key.startswith("World Model"):
+        #     pdb.set_trace()
         with StatsReporter.lock:
             StatsReporter.stats_dict[self.category][key].append(value)
             StatsReporter.stats_aggregation[self.category][key] = aggregation
@@ -378,12 +385,14 @@ class StatsReporter:
 
         :param step: Training step which to write these stats as.
         """
+        print(f"=================== StatsReporter Writing stats ===================")
         with StatsReporter.lock:
             values: Dict[str, StatsSummary] = {}
             for key in StatsReporter.stats_dict[self.category]:
                 if len(StatsReporter.stats_dict[self.category][key]) > 0:
                     stat_summary = self.get_stats_summaries(key)
                     values[key] = stat_summary
+            print(f"Num writers: {len(StatsReporter.writers)} writers: {StatsReporter.writers}")
             for writer in StatsReporter.writers:
                 writer.write_stats(self.category, values, step)
             del StatsReporter.stats_dict[self.category]

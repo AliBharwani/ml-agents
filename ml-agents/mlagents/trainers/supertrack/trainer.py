@@ -270,7 +270,6 @@ class SuperTrackTrainer(RLTrainer):
         """
         Takes a trajectory and processes it, putting it into the replay buffer.
         """
-        self.optimizer.check_wm_layernorm(f"Processing trajectory!")
         super()._process_trajectory(trajectory)
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
         if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:

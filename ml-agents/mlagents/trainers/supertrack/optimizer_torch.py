@@ -123,7 +123,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         loss = 0
         wpos_loss = wvel_loss = wang_loss = wrot_loss = 0
         for i in range(raw_window_size):
-            self.check_wm_layernorm(f"{i}")
             cur_heights = heights[:, i, ...].clone().detach()
             cur_up_dir = up_dir[:, i, ...].clone().detach()
             # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function

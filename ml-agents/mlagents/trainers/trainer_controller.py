@@ -181,7 +181,6 @@ class TrainerController:
                 trainer._initialize()
             except Exception as e:
                 print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
-        trainer.optimizer.check_wm_layernorm("At the end of _create_trainer_and_manager")
             
 
     def _create_trainers_and_managers(
@@ -197,8 +196,6 @@ class TrainerController:
             # Initial reset
             self._reset_env(env_manager)
             self.param_manager.log_current_lesson()
-            for trainer in self.trainers.values():
-                trainer.optimizer.check_wm_layernorm("Before first advance call")
             while self._not_done_training():
                 n_steps = self.advance(env_manager)
                 for _ in range(n_steps):
@@ -260,14 +257,8 @@ class TrainerController:
         with hierarchical_timer("env_step"):
             new_step_infos = env_manager.get_steps()
             self._register_new_behaviors(env_manager, new_step_infos)
-            if self.first_update:
-                for trainer in self.trainers.values():
-                    trainer.optimizer.check_wm_layernorm("Right after _register_new_behaviors")
 
             num_steps = env_manager.process_steps(new_step_infos)
-        if self.first_update:
-            for trainer in self.trainers.values():
-                trainer.optimizer.check_wm_layernorm("env_manager.process_steps")
         # Report current lesson for each environment parameter
         for (
             param_name,
@@ -279,8 +270,6 @@ class TrainerController:
                 )
 
         for trainer in self.trainers.values():
-            if self.first_update:
-                trainer.optimizer.check_wm_layernorm("At first advance call")
             if not (trainer.threaded or trainer.multiprocess):
                 with hierarchical_timer("trainer_advance"):
                     trainer.advance()
