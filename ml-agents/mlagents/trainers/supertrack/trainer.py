@@ -104,12 +104,14 @@ class SuperTrackTrainer(RLTrainer):
         self.policy_batch_size = self.trainer_settings.policy_network_settings.batch_size
 
 
-    def _initialize(self):
+    def _initialize(self, shared_dict):
         self.optimizer._init_world_model()
         
         self.model_saver.register(self.policy)
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
+
+        self.shared_dict = shared_dict
 
         if self.multiprocess:
             actor_gpu = copy.deepcopy(self.policy.actor)

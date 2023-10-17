@@ -9,6 +9,7 @@ from collections import defaultdict
 import torch.multiprocessing as mp
 
 import numpy as np
+from mlagents.trainers.stats import StatsReporterMP
 
 from mlagents_envs.logging_util import get_logger
 from mlagents.trainers.env_manager import EnvManager, EnvironmentStep
@@ -71,6 +72,8 @@ class TrainerController:
         self.rank = get_rank()
 
         self.first_update = True
+        self.stats_reporter_mp = None
+        self.manager = None
 
 
     @timed
@@ -129,7 +132,6 @@ class TrainerController:
             trainer = self.trainers[brain_name]
         else:
             trainer = self.trainer_factory.generate(brain_name)
-            self.use_mp = trainer.parameters.use_pytorch_mp
             self.trainers[brain_name] = trainer
             if trainer.threaded:
                 # Only create trainer thread for new trainers
@@ -138,8 +140,13 @@ class TrainerController:
                 )
                 self.trainer_threads.append(trainerthread)
             elif trainer.multiprocess:
+                self.manager = mp.Manager()
+                self.shared_dict = self.manager.dict()
+                # self.lock = mp.Lock()
+                self.stats_reporter_mp = StatsReporterMP(brain_name, self.shared_dict)
+                trainer.stats_reporter = self.stats_reporter_mp
                 run_init = trainer.get_trainer_name() == "supertrack" 
-                trainerprocess = mp.Process(target=self.trainer_update_func, args=(trainer,), kwargs={"run_initialize_function":run_init,}, daemon=True)
+                trainerprocess = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer,None), daemon=True)
                 self.trainer_processes.append(trainerprocess)
             else:
                 print(f"Running trainer on same thread & process as env manager")
@@ -302,6 +309,9 @@ class TrainerController:
         """
         self.kill_trainers = True
 
+        for t in self.trainer_processes:
+            t.terminate()
+
         for t in [self.trainer_threads, self.trainer_processes]:
             try:
                 t.join(timeout_seconds)
@@ -320,12 +330,17 @@ class TrainerController:
                     merge_gauges(thread_timer_stack.gauges)
         
 
-    def trainer_update_func(self, trainer: Trainer, run_initialize_function = False) -> None:
-        if run_initialize_function:
-            try:
-                trainer._initialize()
-            except Exception as e:
-                print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
+    def trainer_update_func(self, trainer: Trainer) -> None:
         while not self.kill_trainers:
+            with hierarchical_timer("trainer_advance"):
+                trainer.advance()
+
+    @staticmethod
+    def trainer_process_update_func(trainer: Trainer, shared_dict) -> None:
+        try:
+            trainer._initialize(shared_dict)
+        except Exception as e:
+            print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
+        while True:
             with hierarchical_timer("trainer_advance"):
                 trainer.advance()

@@ -58,6 +58,13 @@ class Trainer(abc.ABC):
         """
         return self._stats_reporter
 
+    @stats_reporter.setter
+    def stats_reporter(self, value: StatsReporter) -> None:
+        """
+        Sets the stats reporter associated with this Trainer.
+        """
+        self._stats_reporter = value
+
     @property
     def parameters(self) -> TrainerSettings:
         """

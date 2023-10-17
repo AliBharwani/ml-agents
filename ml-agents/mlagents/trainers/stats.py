@@ -8,6 +8,7 @@ import os
 import time
 # from threading import RLock
 from torch.multiprocessing import RLock
+import torch.multiprocessing as mp
 from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 
 from mlagents_envs.logging_util import get_logger
@@ -300,7 +301,34 @@ class TensorboardWriter(StatsWriter):
                 self.summary_writers[category].flush()
 
 
-class StatsReporter:
+class StatsReporterABC(abc.ABC):
+
+    @abc.abstractmethod
+    def add_property(self, property_type: StatsPropertyType, value: Any) -> None:
+        pass
+
+    @abc.abstractmethod
+    def add_stat(
+        self,
+        key: str,
+        value: float,
+        aggregation: StatsAggregationMethod = StatsAggregationMethod.AVERAGE,
+    ) -> None:
+        pass
+
+    @abc.abstractmethod
+    def set_stat(self, key: str, value: float) -> None:
+        pass
+
+    @abc.abstractmethod
+    def write_stats(self, step: int) -> None:
+        pass
+
+    @abc.abstractmethod
+    def get_stats_summaries(self, key: str) -> StatsSummary:
+        pass
+
+class StatsReporter(StatsReporterABC):
     writers: List[StatsWriter] = []
     stats_dict: Dict[str, Dict[str, List]] = defaultdict(lambda: defaultdict(list))
     lock = RLock()
@@ -412,3 +440,106 @@ class StatsReporter:
             full_dist=stat_values,
             aggregation_method=StatsReporter.stats_aggregation[self.category][key],
         )
+
+
+# LESS GOO
+class StatsReporterMP(StatsReporterABC):
+    # WRITERS ARE NOT SYNCRHONIZED BETWEEN PROCESSES! 
+    # writers: List[StatsWriter] 
+
+    def __init__(self, category: str, shared_dict):
+        """
+        Generic StatsReporter. A category is the broadest type of storage (would
+        correspond the run name and trainer name, e.g. 3DBalltest_3DBall. A key is the
+        type of stat it is (e.g. Environment/Reward). Finally the Value is the float value
+        attached to this stat.
+        """
+        self.category: str = category
+        self.shared_dict = shared_dict
+        self.lock = mp.Lock()
+
+
+    def add_stat(
+        self,
+        key: str,
+        value: float,
+        aggregation: StatsAggregationMethod = StatsAggregationMethod.AVERAGE,
+    ) -> None:
+        """
+        Add a float value stat to the StatsReporter.
+
+        :param key: The type of statistic, e.g. Environment/Reward.
+        :param value: the value of the statistic.
+        :param aggregation: the aggregation method for the statistic, default StatsAggregationMethod.AVERAGE.
+        """
+        pass
+
+    def set_stat(self, key: str, value: float) -> None:
+        pass
+
+    def write_stats(self, step: int) -> None:
+        pass
+
+    def get_stats_summaries(self, key: str) -> StatsSummary:
+        pass
+
+    def add_property(self, property_type: StatsPropertyType, value: Any) -> None:
+        pass
+# CHAT GPT-4's SHITTY CODE:
+
+
+# class StatsAggregationMethod(Enum):
+#     AVERAGE = 1  # or some valid enumeration values
+
+# # This is a wrapper class around your shared dictionary.
+# class SharedStats:
+#     def __init__(self):
+#         self.manager = multiprocessing.Manager()
+#         self.shared_dict = self.manager.dict()
+#         self.lock = multiprocessing.Lock()
+#         self.update_event = multiprocessing.Event()
+#         self.write_event = multiprocessing.Event()
+
+#     def update_stat(self, category, item, method):
+#         with self.lock:  # Ensure exclusive access to the shared resource
+#             if category not in self.shared_dict:
+#                 self.shared_dict[category] = self.manager.dict()
+#             self.shared_dict[category][item] = method
+#             self.update_event.set()  # Signal that an update occurred
+
+#     def get_stat(self):
+#         self.update_event.wait()  # Wait for an update to occur
+#         with self.lock:
+#             self.update_event.clear()  # Reset the event
+#             return dict(self.shared_dict)  # Return a regular dict for simplicity
+
+#     def write_stats(self):
+#         self.write_event.wait()  # Wait for the write signal
+#         with self.lock:
+#             # Here, you would typically write the stats to a file or another output stream.
+#             # For demonstration, we're just printing the stats.
+#             print("Stats:", dict(self.shared_dict))
+#             self.shared_dict.clear()  # Clear stats after writing
+#             self.write_event.clear()  # Reset the event
+
+# # Here is a function that a worker process might use to update stats.
+# def worker_process(shared_stats):
+#     shared_stats.update_stat('category1', 'item1', StatsAggregationMethod.AVERAGE)
+#     # Trigger the write event after updating (for demonstration)
+#     shared_stats.write_event.set()
+
+# def main():
+#     shared_stats = SharedStats()
+
+#     # Start a worker process
+#     p = multiprocessing.Process(target=worker_process, args=(shared_stats,))
+#     p.start()
+
+#     # In the main process, you could wait for stats to be updated and then print them.
+#     updated_stats = shared_stats.get_stat()
+#     print("Updated stats:", updated_stats)
+
+#     # Wait for the write signal and then write stats.
+#     shared_stats.write_stats()
+
+#     p.join()  # Wait for the worker process to finish
