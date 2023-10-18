@@ -53,7 +53,7 @@ class TrainerFactory:
         self.multi_gpu = multi_gpu
         self.ghost_controller = GhostController()
 
-    def generate(self, behavior_name: str) -> Trainer:
+    def generate(self, behavior_name: str, StatsReporterOverride = None) -> Trainer:
         trainer_settings = self.trainer_config[behavior_name]
         return TrainerFactory._initialize_trainer(
             trainer_settings,
@@ -65,6 +65,7 @@ class TrainerFactory:
             self.seed,
             self.param_manager,
             self.multi_gpu,
+            StatsReporterOverride,
         )
 
     @staticmethod
@@ -78,6 +79,7 @@ class TrainerFactory:
         seed: int,
         param_manager: EnvironmentParameterManager,
         multi_gpu: bool = False,
+        StatsReporterOverride = None
     ) -> Trainer:
         """
         Initializes a trainer given a provided trainer configuration and brain parameters, as well as
@@ -110,6 +112,7 @@ class TrainerFactory:
                 load_model,
                 seed,
                 trainer_artifact_path,
+                StatsReporterOverride=StatsReporterOverride,
             )
 
         except KeyError:

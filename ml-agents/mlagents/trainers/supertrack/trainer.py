@@ -62,6 +62,7 @@ class SuperTrackTrainer(RLTrainer):
         load: bool,
         seed: int,
         artifact_path: str,
+        StatsReporterOverride = None,
     ):
         """
         Responsible for collecting experiences and training SAC model.
@@ -80,6 +81,7 @@ class SuperTrackTrainer(RLTrainer):
             load,
             artifact_path,
             reward_buff_cap,
+            StatsReporterOverride=StatsReporterOverride,
         )
         print(f"SuperTrackTrainer is on thread: {threading.current_thread().name}")
 
@@ -104,14 +106,12 @@ class SuperTrackTrainer(RLTrainer):
         self.policy_batch_size = self.trainer_settings.policy_network_settings.batch_size
 
 
-    def _initialize(self, shared_dict):
+    def _initialize(self):
         self.optimizer._init_world_model()
         
         self.model_saver.register(self.policy)
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
-
-        self.shared_dict = shared_dict
 
         if self.multiprocess:
             actor_gpu = copy.deepcopy(self.policy.actor)
@@ -256,8 +256,8 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
             else:
                 raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
-        if has_updated:
-            print(f"Update steps: {self.update_steps}")
+        # if has_updated:
+        #     print(f"Update steps: {self.update_steps}")
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
         if self._has_enough_data_to_train():

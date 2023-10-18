@@ -82,7 +82,6 @@ class SACTrainer(OffPolicyTrainer):
         )
 
         self.checkpoint_replay_buffer = self.hyperparameters.save_replay_buffer
-        print(f"Torch SAC Trainer: {threading.current_thread().name}")
 
     def _process_trajectory(self, trajectory: Trajectory) -> None:
         """

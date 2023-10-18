@@ -214,7 +214,6 @@ class RLTrainer(Trainer):
         """
         Saves training statistics to Tensorboard.
         """
-        print(" =============== CALLING WRITE SUMMARY =========================")
         self.stats_reporter.add_stat("Is Training", float(self.should_still_train))
         self.stats_reporter.write_stats(int(step))
 
@@ -305,6 +304,5 @@ class RLTrainer(Trainer):
                 with hierarchical_timer("_update_policy"):
                     if self._update_policy():
                         for q in self.policy_queues:
-                            # print(f"Getting policy queue")
                             # Get policies that correspond to the policy queue in question
                             q.put(self.get_policy(q.behavior_id))

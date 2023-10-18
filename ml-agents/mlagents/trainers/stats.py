@@ -1,13 +1,14 @@
 from collections import defaultdict
 from enum import Enum
+import enum
 import pdb
 from typing import List, Dict, NamedTuple, Any, Optional
 import numpy as np
 import abc
 import os
 import time
-# from threading import RLock
-from torch.multiprocessing import RLock
+from threading import RLock
+# from torch.multiprocessing import RLock
 import torch.multiprocessing as mp
 from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 
@@ -239,7 +240,6 @@ class TensorboardWriter(StatsWriter):
         self, category: str, values: Dict[str, StatsSummary], step: int
     ) -> None:
         self._maybe_create_summary_writer(category)
-        print(f"=================== Tensorboard writing stats ===================")
         for key, value in values.items():
             if key in self.hidden_keys:
                 continue
@@ -324,10 +324,6 @@ class StatsReporterABC(abc.ABC):
     def write_stats(self, step: int) -> None:
         pass
 
-    @abc.abstractmethod
-    def get_stats_summaries(self, key: str) -> StatsSummary:
-        pass
-
 class StatsReporter(StatsReporterABC):
     writers: List[StatsWriter] = []
     stats_dict: Dict[str, Dict[str, List]] = defaultdict(lambda: defaultdict(list))
@@ -344,12 +340,11 @@ class StatsReporter(StatsReporterABC):
         attached to this stat.
         """
         self.category: str = category
-        print(f"StatsReporters writers: {self.writers}")
 
     @staticmethod
     def add_writer(writer: StatsWriter) -> None:
-        with StatsReporter.lock:
-            StatsReporter.writers.append(writer)
+        # with StatsReporter.lock:
+        StatsReporter.writers.append(writer)
 
     def add_property(self, property_type: StatsPropertyType, value: Any) -> None:
         """
@@ -377,10 +372,6 @@ class StatsReporter(StatsReporterABC):
         :param value: the value of the statistic.
         :param aggregation: the aggregation method for the statistic, default StatsAggregationMethod.AVERAGE.
         """
-        if key != "Policy/Entropy":
-            print(f"Add stat called with: {key}, {value}")
-        # if key.startswith("World Model"):
-        #     pdb.set_trace()
         with StatsReporter.lock:
             StatsReporter.stats_dict[self.category][key].append(value)
             StatsReporter.stats_aggregation[self.category][key] = aggregation
@@ -413,19 +404,17 @@ class StatsReporter(StatsReporterABC):
 
         :param step: Training step which to write these stats as.
         """
-        print(f"=================== StatsReporter Writing stats ===================")
         with StatsReporter.lock:
             values: Dict[str, StatsSummary] = {}
             for key in StatsReporter.stats_dict[self.category]:
                 if len(StatsReporter.stats_dict[self.category][key]) > 0:
-                    stat_summary = self.get_stats_summaries(key)
+                    stat_summary = self._get_stats_summaries(key)
                     values[key] = stat_summary
-            print(f"Num writers: {len(StatsReporter.writers)} writers: {StatsReporter.writers}")
             for writer in StatsReporter.writers:
                 writer.write_stats(self.category, values, step)
             del StatsReporter.stats_dict[self.category]
 
-    def get_stats_summaries(self, key: str) -> StatsSummary:
+    def _get_stats_summaries(self, key: str) -> StatsSummary:
         """
         Get the mean, std, count, sum and aggregation method of a particular statistic, since last write.
 
@@ -441,13 +430,63 @@ class StatsReporter(StatsReporterABC):
             aggregation_method=StatsReporter.stats_aggregation[self.category][key],
         )
 
+class StatsReporterCommand(enum.Enum):
+    ADD_STAT = 1
+    SET_STAT = 2
+    WRITE_STATS = 3
+    ADD_PROPERTY = 4
 
-# LESS GOO
+def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter]):
+    stats_dict: Dict[str, Dict[str, List]] = defaultdict(lambda: defaultdict(list))
+    stats_aggregation: Dict[str, Dict[str, StatsAggregationMethod]] = defaultdict(
+        lambda: defaultdict(lambda: StatsAggregationMethod.AVERAGE)
+    )        
+
+    try:
+        while True:
+            _queried = False
+            while not queue.empty():
+                _queried = True
+                command, args = queue.get()
+                if command == StatsReporterCommand.ADD_STAT:
+                    key, value, aggregation = args
+                    stats_dict[category][key].append(value)
+                    stats_aggregation[category][key] = aggregation
+                elif command == StatsReporterCommand.SET_STAT:
+                    key, value = args
+                    stats_dict[category][key] = [value]
+                    stats_aggregation[category][key] = StatsAggregationMethod.MOST_RECENT
+                elif command == StatsReporterCommand.WRITE_STATS:
+                    step = args
+                    values: Dict[str, StatsSummary] = {}
+                    for key in stats_dict[category]:
+                        if len(stats_dict[category][key]) > 0:
+                            stat_summary = StatsSummary(
+                                full_dist=stats_dict[category][key],
+                                aggregation_method=stats_aggregation[category][key],
+                            )
+                            values[key] = stat_summary
+                    for writer in writers:
+                        writer.write_stats(category, values, step)
+                    del stats_dict[category]
+                elif command == StatsReporterCommand.ADD_PROPERTY:
+                    property_type, value = args
+                    for writer in writers:
+                        writer.add_property(category, property_type, value)
+            if not _queried:
+                time.sleep(.1)
+    except(KeyboardInterrupt) as ex:
+        logger.debug("StatsReporter shutting down.")
+    except Exception as ex:
+        logger.exception("An unexpected error occurred in the StatsReporter.")
+    finally:
+        logger.debug("StatsReporter closing.")
+        queue.close()
+
+
 class StatsReporterMP(StatsReporterABC):
-    # WRITERS ARE NOT SYNCRHONIZED BETWEEN PROCESSES! 
-    # writers: List[StatsWriter] 
-
-    def __init__(self, category: str, shared_dict):
+    
+    def __init__(self, category: str, queue: mp.Queue):
         """
         Generic StatsReporter. A category is the broadest type of storage (would
         correspond the run name and trainer name, e.g. 3DBalltest_3DBall. A key is the
@@ -455,9 +494,7 @@ class StatsReporterMP(StatsReporterABC):
         attached to this stat.
         """
         self.category: str = category
-        self.shared_dict = shared_dict
-        self.lock = mp.Lock()
-
+        self.queue = queue
 
     def add_stat(
         self,
@@ -472,74 +509,13 @@ class StatsReporterMP(StatsReporterABC):
         :param value: the value of the statistic.
         :param aggregation: the aggregation method for the statistic, default StatsAggregationMethod.AVERAGE.
         """
-        pass
+        self.queue.put((StatsReporterCommand.ADD_STAT, (key, value, aggregation)))
 
     def set_stat(self, key: str, value: float) -> None:
-        pass
+        self.queue.put((StatsReporterCommand.SET_STAT, (key, value)))
 
     def write_stats(self, step: int) -> None:
-        pass
-
-    def get_stats_summaries(self, key: str) -> StatsSummary:
-        pass
+        self.queue.put((StatsReporterCommand.WRITE_STATS, (step)))
 
     def add_property(self, property_type: StatsPropertyType, value: Any) -> None:
-        pass
-# CHAT GPT-4's SHITTY CODE:
-
-
-# class StatsAggregationMethod(Enum):
-#     AVERAGE = 1  # or some valid enumeration values
-
-# # This is a wrapper class around your shared dictionary.
-# class SharedStats:
-#     def __init__(self):
-#         self.manager = multiprocessing.Manager()
-#         self.shared_dict = self.manager.dict()
-#         self.lock = multiprocessing.Lock()
-#         self.update_event = multiprocessing.Event()
-#         self.write_event = multiprocessing.Event()
-
-#     def update_stat(self, category, item, method):
-#         with self.lock:  # Ensure exclusive access to the shared resource
-#             if category not in self.shared_dict:
-#                 self.shared_dict[category] = self.manager.dict()
-#             self.shared_dict[category][item] = method
-#             self.update_event.set()  # Signal that an update occurred
-
-#     def get_stat(self):
-#         self.update_event.wait()  # Wait for an update to occur
-#         with self.lock:
-#             self.update_event.clear()  # Reset the event
-#             return dict(self.shared_dict)  # Return a regular dict for simplicity
-
-#     def write_stats(self):
-#         self.write_event.wait()  # Wait for the write signal
-#         with self.lock:
-#             # Here, you would typically write the stats to a file or another output stream.
-#             # For demonstration, we're just printing the stats.
-#             print("Stats:", dict(self.shared_dict))
-#             self.shared_dict.clear()  # Clear stats after writing
-#             self.write_event.clear()  # Reset the event
-
-# # Here is a function that a worker process might use to update stats.
-# def worker_process(shared_stats):
-#     shared_stats.update_stat('category1', 'item1', StatsAggregationMethod.AVERAGE)
-#     # Trigger the write event after updating (for demonstration)
-#     shared_stats.write_event.set()
-
-# def main():
-#     shared_stats = SharedStats()
-
-#     # Start a worker process
-#     p = multiprocessing.Process(target=worker_process, args=(shared_stats,))
-#     p.start()
-
-#     # In the main process, you could wait for stats to be updated and then print them.
-#     updated_stats = shared_stats.get_stat()
-#     print("Updated stats:", updated_stats)
-
-#     # Wait for the write signal and then write stats.
-#     shared_stats.write_stats()
-
-#     p.join()  # Wait for the worker process to finish
+        self.queue.put((StatsReporterCommand.ADD_PROPERTY, (property_type, value)))

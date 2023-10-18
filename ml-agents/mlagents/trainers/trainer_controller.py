@@ -4,12 +4,14 @@
 
 import os
 import threading
+import time
 from typing import Dict, Set, List
 from collections import defaultdict
 import torch.multiprocessing as mp
 
 import numpy as np
-from mlagents.trainers.stats import StatsReporterMP
+from mlagents.trainers import stats
+from mlagents.trainers.stats import StatsReporter, StatsReporterCommand, StatsReporterMP, StatsSummary, StatsWriter
 
 from mlagents_envs.logging_util import get_logger
 from mlagents.trainers.env_manager import EnvManager, EnvironmentStep
@@ -18,6 +20,7 @@ from mlagents_envs.exception import (
     UnityCommunicationException,
     UnityCommunicatorStoppedException,
 )
+from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 from mlagents_envs.timers import (
     hierarchical_timer,
     timed,
@@ -31,6 +34,66 @@ from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
 from mlagents.trainers.agent_processor import AgentManager
 from mlagents import torch_utils
 from mlagents.torch_utils.globals import get_rank
+
+logger = get_logger(__name__)
+
+
+# def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter]):
+#     # Cannot use lambda functions in a multiprocessing context
+#     def _defaultdict_list():
+#         return defaultdict(list)
+    
+#     def _statsagg():
+#         return StatsAggregationMethod.AVERAGE
+    
+#     def _defaultdict_defaultdicts_statsagg():
+#         return defaultdict(_statsagg)
+    
+#     stats_dict: Dict[str, Dict[str, List]] = defaultdict(lambda: defaultdict(list))
+#     stats_aggregation: Dict[str, Dict[str, StatsAggregationMethod]] = defaultdict(
+#         lambda: defaultdict(lambda: StatsAggregationMethod.AVERAGE)
+#     )        
+
+#     try:
+#         while True:
+#             _queried = False
+#             while not queue.empty():
+#                 _queried = True
+#                 command, args = queue.get()
+#                 if command == StatsReporterCommand.ADD_STAT:
+#                     key, value, aggregation = args
+#                     stats_dict[category][key].append(value)
+#                     stats_aggregation[category][key] = aggregation
+#                 elif command == StatsReporterCommand.SET_STAT:
+#                     key, value = args
+#                     stats_dict[category][key] = [value]
+#                     stats_aggregation[category][key] = StatsAggregationMethod.MOST_RECENT
+#                 elif command == StatsReporterCommand.WRITE_STATS:
+#                     step = args
+#                     values: Dict[str, StatsSummary] = {}
+#                     for key in stats_dict[category]:
+#                         if len(stats_dict[category][key]) > 0:
+#                             stat_summary = StatsSummary(
+#                                 full_dist=stats_dict[category][key],
+#                                 aggregation_method=stats_aggregation[category][key],
+#                             )
+#                             values[key] = stat_summary
+#                     for writer in writers:
+#                         writer.write_stats(category, values, step)
+#                     del stats_dict[category]
+#                 elif command == StatsReporterCommand.ADD_PROPERTY:
+#                     property_type, value = args
+#                     for writer in writers:
+#                         writer.add_property(category, property_type, value)
+#             if not _queried:
+#                 time.sleep(.1)
+#     except(KeyboardInterrupt) as ex:
+#         logger.debug("StatsReporter shutting down.")
+#     except Exception as ex:
+#         logger.exception("An unexpected error occurred in the StatsReporter.")
+#     finally:
+#         logger.debug("StatsReporter closing.")
+#         queue.close()
 
 
 class TrainerController:
@@ -72,8 +135,6 @@ class TrainerController:
         self.rank = get_rank()
 
         self.first_update = True
-        self.stats_reporter_mp = None
-        self.manager = None
 
 
     @timed
@@ -127,33 +188,32 @@ class TrainerController:
         parsed_behavior_id = BehaviorIdentifiers.from_name_behavior_id(name_behavior_id)
         brain_name = parsed_behavior_id.brain_name
         trainerthread = None
-        trainerprocess = None
+        trainer_process = None
         if brain_name in self.trainers:
             trainer = self.trainers[brain_name]
         else:
-            trainer = self.trainer_factory.generate(brain_name)
-            self.trainers[brain_name] = trainer
-            if trainer.threaded:
+            trainer_config = self.trainer_factory.trainer_config[brain_name]
+            if trainer_config.threaded:
+                trainer = self.trainer_factory.generate(brain_name)
                 # Only create trainer thread for new trainers
                 trainerthread = threading.Thread(
                     target=self.trainer_update_func, args=(trainer,), daemon=True
                 )
                 self.trainer_threads.append(trainerthread)
-            elif trainer.multiprocess:
-                self.manager = mp.Manager()
-                self.shared_dict = self.manager.dict()
-                # self.lock = mp.Lock()
-                self.stats_reporter_mp = StatsReporterMP(brain_name, self.shared_dict)
-                trainer.stats_reporter = self.stats_reporter_mp
-                run_init = trainer.get_trainer_name() == "supertrack" 
-                trainerprocess = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer,None), daemon=True)
-                self.trainer_processes.append(trainerprocess)
+            elif trainer_config.use_pytorch_mp:
+                stats_queue = mp.Queue()
+                trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
+                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer,), daemon=True)
+                stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers), daemon=True)
+                self.trainer_processes += [trainer_process, stats_reporter_process]
             else:
                 print(f"Running trainer on same thread & process as env manager")
+                trainer = self.trainer_factory.generate(brain_name)
                 
             env_manager.on_training_started(
                 brain_name, self.trainer_factory.trainer_config[brain_name]
             )
+            self.trainers[brain_name] = trainer
 
         policy = trainer.create_policy(
             parsed_behavior_id,
@@ -178,12 +238,13 @@ class TrainerController:
         trainer.subscribe_trajectory_queue(agent_manager.trajectory_queue)
 
         # Only start new trainers
-        if trainerthread is not None or trainerprocess is not None:
+        if trainerthread is not None or trainer.multiprocess:
             if trainerthread is not None:
                 trainerthread.start()
-            if trainerprocess is not None: 
-                trainerprocess.start()
-        elif trainer.get_trainer_name() == "supertrack" : 
+            if trainer.multiprocess: 
+                trainer_process.start()
+                stats_reporter_process.start()
+        elif trainer.get_trainer_name() == "supertrack": 
             try:
                 trainer._initialize()
             except Exception as e:
@@ -336,9 +397,9 @@ class TrainerController:
                 trainer.advance()
 
     @staticmethod
-    def trainer_process_update_func(trainer: Trainer, shared_dict) -> None:
+    def trainer_process_update_func(trainer: Trainer) -> None:
         try:
-            trainer._initialize(shared_dict)
+            trainer._initialize()
         except Exception as e:
             print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
         while True:
