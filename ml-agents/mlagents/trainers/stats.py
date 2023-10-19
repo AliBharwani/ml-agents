@@ -10,6 +10,7 @@ import time
 from threading import RLock
 # from torch.multiprocessing import RLock
 import torch.multiprocessing as mp
+from mlagents_envs import logging_util
 from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 
 from mlagents_envs.logging_util import get_logger
@@ -195,6 +196,12 @@ class ConsoleWriter(StatsWriter):
             if self.self_play and "Self-play/ELO" in values:
                 elo_stats = values["Self-play/ELO"]
                 log_info.append(f"ELO: {elo_stats.mean:0.3f}")
+        if "Policy/Loss" in values:
+            log_info.append(f"Policy Loss: {values['Policy/Loss'].mean:0.3f}")
+        if "World Model/total loss" in values:
+            log_info.append(
+                f"World Model Loss: {values['World Model/total loss'].mean:0.3f}"
+            )
         # else:
         #     log_info.append("No episode was completed since last summary")
         #     log_info.append(is_training)
@@ -441,6 +448,9 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
     stats_aggregation: Dict[str, Dict[str, StatsAggregationMethod]] = defaultdict(
         lambda: defaultdict(lambda: StatsAggregationMethod.AVERAGE)
     )        
+    # Set log level. On some platforms, the logger isn't common with the
+    # main process, so we need to set it again.
+    logging_util.set_log_level(logging_util.INFO)
 
     try:
         while True:

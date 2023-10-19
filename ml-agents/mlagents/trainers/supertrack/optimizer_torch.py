@@ -250,7 +250,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     def update_policy(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]: 
         window_size = raw_window_size + 1
         if (batch.num_experiences // window_size != batch_size):
-                raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size}, received {batch.num_experiences}")
+                raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size} = {window_size*batch_size}, received {batch.num_experiences}, diff: {batch.num_experiences - window_size*batch_size}")
 
         # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
         st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]

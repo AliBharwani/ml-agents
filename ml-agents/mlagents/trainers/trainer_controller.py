@@ -201,7 +201,7 @@ class TrainerController:
                 )
                 self.trainer_threads.append(trainerthread)
             elif trainer_config.use_pytorch_mp:
-                stats_queue = mp.Queue()
+                stats_queue = mp.Queue(maxsize=0)
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
                 trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer,), daemon=True)
                 stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers), daemon=True)
