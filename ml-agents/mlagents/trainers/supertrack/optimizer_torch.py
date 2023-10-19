@@ -71,7 +71,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self._world_model.to(default_device())
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self._world_model.train()
-        print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
         self.check_wm_layernorm("On init world model")
 
     def set_actor_gpu_to_optimizer(self):
@@ -364,7 +363,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             lreg += step_lreg
             lsreg += step_lsreg
             
-        update_stats = {"Policy/loss": loss.item(),
+        update_stats = {"Policy/Loss": loss.item(),
                         "Policy/pos_loss": lpos.item(),
                         "Policy/vel_loss": lvel.item(),
                         "Policy/rot_loss": lrot.item(),

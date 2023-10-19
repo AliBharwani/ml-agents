@@ -21,6 +21,14 @@ class UnityConfigSideChannel(SideChannel):
         super().__init__(uuid.UUID("d3930bb0-2df3-4080-90f7-9801df5b4a9f"))
         self.output_dir = output_dir
 
+    def request_configuration(self) -> None:
+        """
+        Requests the configuration from the Unity environment.
+        """
+        msg = OutgoingMessage()
+        msg.write_bool(True)
+        self.queue_message_to_send(msg)
+
     def on_message_received(self, msg: IncomingMessage) -> None:
         run_options_path = os.path.join(self.output_dir, "unity_config.json")
         try:

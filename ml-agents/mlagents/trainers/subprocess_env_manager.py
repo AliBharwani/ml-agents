@@ -144,10 +144,10 @@ def worker(
 
     stats_channel = StatsSideChannel()
     training_analytics_channel: Optional[TrainingAnalyticsSideChannel] = None
-    unity_config_channel: Optional[UnityConfigSideChannel] = None
+    unity_config_channel: UnityConfigSideChannel = UnityConfigSideChannel(run_options.checkpoint_settings.write_path)
     if worker_id == 0:
         training_analytics_channel = TrainingAnalyticsSideChannel()
-        unity_config_channel = UnityConfigSideChannel(run_options.checkpoint_settings.write_path)
+        unity_config_channel.request_configuration()
     env: UnityEnvironment = None
     # Set log level. On some platforms, the logger isn't common with the
     # main process, so we need to set it again.

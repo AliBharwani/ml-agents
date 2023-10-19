@@ -238,7 +238,6 @@ class TorchSACOptimizer(TorchOptimizer):
         self._move_to_device(default_device())
         self.check_wm_layernorm("After init")
         print(f"Initializing SAC Optimzer on thread: {threading.current_thread().name}")
-        print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
         self.first_update = True
 
     def check_wm_layernorm(self, print_on_true : str = None):
