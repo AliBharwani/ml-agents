@@ -462,10 +462,10 @@ class AgentBuffer(MutableMapping):
             # Subtract window_size from buff_len because we want to make sure there are enough entries for a full window
             # after the last start idx 
             np.random.randint(0, (buff_len - window_size) // window_size , size=batch_size) * window_size
-        )
+        ) 
         for i in start_idxes:
             # make sure there are enough entries after this
-            num_steps_remaning =  self[BufferKey.TRAJ_LEN][i] - self[BufferKey.IDX_IN_TRAJ][i]
+            num_steps_remaning =  self[BufferKey.TRAJ_LEN][i] - self[BufferKey.IDX_IN_TRAJ][i] # Usually we would subtract 1 from TRAJ_LEN, but i itself should count as 1
             if num_steps_remaning < window_size:
                 num_steps_to_rewind = window_size - num_steps_remaning
                 if num_steps_to_rewind > self[BufferKey.IDX_IN_TRAJ][i]:
@@ -513,6 +513,19 @@ class AgentBuffer(MutableMapping):
         if current_length > max_length:
             for _key in self.keys():
                 self[_key][:] = self[_key][current_length - max_length :]
+
+    def truncate_on_traj_end(self, max_length: int) -> None:
+        """
+        Truncates the buffer to a certain length, but makes sure we start on a fresh trajectory.
+        """
+        current_length = self.num_experiences
+        if current_length > max_length:
+            cut_mark = current_length - max_length
+            if self[BufferKey.IDX_IN_TRAJ][cut_mark] != 0:
+                # We're not at the end of a trajectory, so rewind until we are.
+                cut_mark -= self[BufferKey.IDX_IN_TRAJ][cut_mark]
+            for _key in self.keys():
+                self[_key][:] = self[_key][cut_mark :]
 
     def resequence_and_append(
         self,

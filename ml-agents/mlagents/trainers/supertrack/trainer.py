@@ -256,12 +256,13 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
             else:
                 raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
-        # if has_updated:
-        #     print(f"Update steps: {self.update_steps}")
+        if has_updated:
+            self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
+            # print(f"Update steps: {self.update_steps}")
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
-        if self._has_enough_data_to_train():
-            self.update_buffer.truncate(
+        if self.update_buffer.num_experiences > self.hyperparameters.buffer_size:
+            self.update_buffer.truncate_on_traj_end(
                 int(self.hyperparameters.buffer_size * BUFFER_TRUNCATE_PERCENT)
             )
         return has_updated

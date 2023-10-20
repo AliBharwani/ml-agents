@@ -17,10 +17,10 @@ class WorldModelNetwork(nn.Module):
         h_size = network_settings.hidden_units
         input_size = network_settings.input_size 
         output_size = network_settings.output_size
-        if input_size is -1:
-            input_size = 700 # Temp override to test SAC 
-        if self.network_settings.output_size is -1:
-            output_size = 48 # Temp override to test SAC
+        # if input_size is -1:
+        #     input_size = 700 # Temp override to test SAC 
+        # if self.network_settings.output_size is -1:
+        #     output_size = 48 # Temp override to test SAC
         # if (input_size == -1):
         #     raise Exception("SuperTrack World Model created without input_size designated in yaml file")
 

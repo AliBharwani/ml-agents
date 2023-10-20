@@ -202,6 +202,8 @@ class ConsoleWriter(StatsWriter):
             log_info.append(
                 f"World Model Loss: {values['World Model/total loss'].mean:0.3f}"
             )
+        if "Num Training Updates" in values:
+            log_info.append(f"Num Training Updates: {values['Num Training Updates'].full_dist[0]}")
         # else:
         #     log_info.append("No episode was completed since last summary")
         #     log_info.append(is_training)
