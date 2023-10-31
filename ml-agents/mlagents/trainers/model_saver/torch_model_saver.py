@@ -124,7 +124,7 @@ class TorchModelSaver(BaseModelSaver):
             # have not changed shape.
             except (KeyError, ValueError, RuntimeError) as err:
                 logger.warning(f"Failed to load for module {name}. Initializing")
-                logger.debug(f"Module loading error : {err}")
+                logger.warning(f"Module loading error : {err}")
 
         if reset_global_steps:
             policy.set_step(0)

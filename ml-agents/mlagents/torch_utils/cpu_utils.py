@@ -1,7 +1,9 @@
 from typing import Optional
+from mlagents_envs.logging_util import get_logger
 
 import os
 
+logger = get_logger(__name__)
 
 def get_num_threads_to_use() -> Optional[int]:
     """
@@ -9,7 +11,7 @@ def get_num_threads_to_use() -> Optional[int]:
     need, but for smaller machines, we'd like to scale to less than that.
     """
     num_cpus = _get_num_available_cpus()
-    print(f"CHANGED PYTOCH AVAILABLE CPUS TO: {num_cpus}")
+    logger.debug(f"CHANGED PYTOCH AVAILABLE CPUS TO: {num_cpus}")
     return num_cpus
 
 

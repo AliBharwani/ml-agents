@@ -4,25 +4,14 @@
 
 from collections import defaultdict
 import copy
-from email import policy
 import threading
-from turtle import up
 from typing import Dict, cast
 import os
 
 from mlagents.trainers.buffer import BufferKey
 from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils
-
-from mlagents.trainers.trajectory import ObsUtil
-import attr
-
-
-# from mlagents.trainers.trajectory import Trajectory
-
 from mlagents.trainers.trajectory import Trajectory
-
-
-from mlagents.trainers.torch_entities.networks import SimpleActor
+from mlagents_envs import logging_util
 
 from mlagents_envs.base_env import BehaviorSpec
 
@@ -33,12 +22,11 @@ from mlagents.trainers.policy.checkpoint_manager import ModelCheckpoint
 
 from mlagents_envs.logging_util import get_logger
 from mlagents_envs.timers import timed
-from mlagents.trainers.buffer import RewardSignalUtil
 from mlagents.trainers.policy import Policy
 from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
 from mlagents.trainers.trainer.rl_trainer import RLTrainer
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
-from mlagents.trainers.settings import TrainerSettings, OffPolicyHyperparamSettings
+from mlagents.trainers.settings import TrainerSettings
 from mlagents.trainers.supertrack.optimizer_torch import SuperTrackPolicyNetwork, TorchSuperTrackOptimizer, SuperTrackSettings
 
 
@@ -47,7 +35,6 @@ logger = get_logger(__name__)
 BUFFER_TRUNCATE_PERCENT = 0.8
 
 TRAINER_NAME = "supertrack"
-
 
 class SuperTrackTrainer(RLTrainer):
     """
@@ -107,15 +94,18 @@ class SuperTrackTrainer(RLTrainer):
 
 
     def _initialize(self):
+        # Set log level. On some platforms, the logger isn't common with the
+        # main process, so we need to set it again.
         self.optimizer._init_world_model()
         
         self.model_saver.register(self.policy)
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
-
         if self.multiprocess:
+            logger.info("intializing GPU instance of actor")
             actor_gpu = copy.deepcopy(self.policy.actor)
             actor_gpu.to("cuda")
+            # actor_gpu.to("cpu")
             actor_gpu.train()
             self.optimizer.actor_gpu = actor_gpu
             self.optimizer.set_actor_gpu_to_optimizer()
@@ -139,6 +129,7 @@ class SuperTrackTrainer(RLTrainer):
         Overrides the default to save the replay buffer.
         """
         super().save_model()
+        logger.info("Finished calling super().save_model()")
         if self.checkpoint_replay_buffer:
             self.save_replay_buffer()
 
@@ -157,7 +148,7 @@ class SuperTrackTrainer(RLTrainer):
     def maybe_load_replay_buffer(self):
         # Load the replay buffer if load
         if self.load and self.checkpoint_replay_buffer:
-            print("Trying to load")
+            logger.info("Trying to load")
             try:
                 self.load_replay_buffer()
             except (AttributeError, FileNotFoundError):
@@ -295,7 +286,7 @@ class SuperTrackTrainer(RLTrainer):
         :return policy
         """
         actor_cls = SuperTrackPolicyNetwork
-        actor_kwargs = {"conditional_sigma": True, "tanh_squash": True}
+        actor_kwargs = {"conditional_sigma": False, "tanh_squash": True}
 
         policy = TorchPolicy(
             self.seed,
@@ -315,6 +306,11 @@ class SuperTrackTrainer(RLTrainer):
         """
         return self.policy
         
+    def close_trainer(self):
+        """
+        Sends a shutdown signal to the trainer, which will wait for any current training loop to finish
+        """
+        pass
 
     @staticmethod
     def get_trainer_name() -> str:

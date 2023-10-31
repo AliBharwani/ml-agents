@@ -10,6 +10,7 @@ import time
 from threading import RLock
 # from torch.multiprocessing import RLock
 import torch.multiprocessing as mp
+from mlagents.torch_utils import torch
 from mlagents_envs import logging_util
 from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 
@@ -492,8 +493,15 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
     except Exception as ex:
         logger.exception("An unexpected error occurred in the StatsReporter.")
     finally:
-        logger.debug("StatsReporter closing.")
+        while not queue.empty(): #_q is a multiprocess.Queue object used to communicate inter-process
+            try:
+                queue.get(timeout=0.001)
+            except:
+                pass
         queue.close()
+        queue.join_thread()
+        logger.info("StatsReporter closing.")
+
 
 
 class StatsReporterMP(StatsReporterABC):
@@ -521,13 +529,30 @@ class StatsReporterMP(StatsReporterABC):
         :param value: the value of the statistic.
         :param aggregation: the aggregation method for the statistic, default StatsAggregationMethod.AVERAGE.
         """
-        self.queue.put((StatsReporterCommand.ADD_STAT, (key, value, aggregation)))
+        try:
+            self.queue.put((StatsReporterCommand.ADD_STAT, (key, value, aggregation)))
+        except Exception as ex:
+            logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
+        # self.queue.put((StatsReporterCommand.ADD_STAT, (key, value, aggregation)))
 
     def set_stat(self, key: str, value: float) -> None:
-        self.queue.put((StatsReporterCommand.SET_STAT, (key, value)))
+        try:
+            self.queue.put((StatsReporterCommand.SET_STAT, (key, value)))
+        except Exception as ex:
+            logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
+        # self.queue.put((StatsReporterCommand.SET_STAT, (key, value)))
 
     def write_stats(self, step: int) -> None:
-        self.queue.put((StatsReporterCommand.WRITE_STATS, (step)))
+        try:
+            self.queue.put((StatsReporterCommand.WRITE_STATS, (step)))
+        except Exception as ex:
+            logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
+        # self.queue.put((StatsReporterCommand.WRITE_STATS, (step)))
 
     def add_property(self, property_type: StatsPropertyType, value: Any) -> None:
-        self.queue.put((StatsReporterCommand.ADD_PROPERTY, (property_type, value)))
+
+        try:
+            self.queue.put((StatsReporterCommand.ADD_PROPERTY, (property_type, value)))
+        except Exception as ex:
+            logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
+        # self.queue.put((StatsReporterCommand.ADD_PROPERTY, (property_type, value)))

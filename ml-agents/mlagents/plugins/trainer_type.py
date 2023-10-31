@@ -1,6 +1,6 @@
 import sys
 from typing import Dict, Tuple, Any
-from mlagents.trainers.supertrack.test_trainer import TestTrainer
+# from mlagents.trainers.testtrainer import TestTrainer
 
 # importlib.metadata is new in python3.8
 # We use the backport for older python versions.
@@ -38,7 +38,7 @@ def get_default_trainer_types() -> Tuple[Dict[str, Any], Dict[str, Any]]:
             SACTrainer.get_trainer_name(): SACTrainer,
             POCATrainer.get_trainer_name(): POCATrainer,
             SuperTrackTrainer.get_trainer_name(): SuperTrackTrainer,
-            TestTrainer.get_trainer_name(): TestTrainer,
+            # TestTrainer.get_trainer_name(): TestTrainer,
         }
     )
     # global all_trainer_settings
@@ -48,7 +48,7 @@ def get_default_trainer_types() -> Tuple[Dict[str, Any], Dict[str, Any]]:
             SACTrainer.get_trainer_name(): SACSettings,
             POCATrainer.get_trainer_name(): POCASettings,
             SuperTrackTrainer.get_trainer_name(): SuperTrackSettings,
-            TestTrainer.get_trainer_name(): SuperTrackSettings,
+            # TestTrainer.get_trainer_name(): SuperTrackSettings,
 
         }
     )

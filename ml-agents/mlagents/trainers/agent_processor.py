@@ -1,5 +1,5 @@
-import multiprocessing
 import sys
+import traceback
 import numpy as np
 from typing import List, Dict, TypeVar, Generic, Tuple, Any, Union
 from collections import defaultdict, Counter
@@ -420,8 +420,17 @@ class AgentManagerQueue(Generic[T]):
             raise self.Empty("The AgentManagerQueue is empty.")
 
     def put(self, item: T) -> None:
+        # try:
         self._queue.put(item)
+        # except BrokenPipeError as e:
+        #     print(f"BrokenPipeError: {e}")
+        #     traceback.print_exc()
 
+    def close(self):
+        self._queue.close()
+    
+    def join_thread(self):
+        self._queue.join_thread()
 
 class AgentManager(AgentProcessor):
     """

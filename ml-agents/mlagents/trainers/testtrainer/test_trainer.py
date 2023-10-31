@@ -11,7 +11,7 @@ import os
 
 from mlagents.trainers.buffer import AgentBuffer, BufferKey
 from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils
-from mlagents.trainers.supertrack.test_optimizer_torch import TorchTestOptimizer
+from mlagents.trainers.testtrainer.test_optimizer_torch import TorchTestOptimizer
 
 from mlagents.trainers.trajectory import ObsUtil
 import attr

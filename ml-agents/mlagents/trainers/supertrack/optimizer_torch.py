@@ -324,15 +324,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             # local_spos, local_srots, local_svels, local_srvels, _, _ = SupertrackUtils.local(cur_spos.clone, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...], rots_as_twoaxis=False, unzip_to_batchsize=False)
             next_frame_kin = [k_pos[:, i+1, ...], k_rots[:, i+1, ...], k_vels[:, i+1, ...], k_rvels[:, i+1, ...], k_h[:, i+1, ...], k_up[:, i+1, ...]]
             local_kpos, local_krots, local_kvels, local_krvels, _, _ = SupertrackUtils.local(*[t.clone().detach() for t in next_frame_kin], rots_as_twoaxis=False, unzip_to_batchsize=False)
-            # local_kpos, local_krots, local_kvels, local_krvels, _, _ = SupertrackUtils.local(k_pos[:, i+1, ...], k_rots[:, i+1, ...], k_vels[:, i+1, ...], k_rvels[:, i+1, ...], k_h[:, i+1, ...], k_up[:, i+1, ...], rots_as_twoaxis=False, unzip_to_batchsize=False)
-            # step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(cur_spos[:, 1:, :], 
-            #                         k_pos[:, i+1, 1:, :],
-            #                         cur_srots[:, 1:, :],
-            #                         k_rots[:, i+1, 1:, :],
-            #                         cur_svels[:, 1:, :], 
-            #                         k_vels[:, i+1, 1:, :], 
-            #                         cur_srvels[:, 1:, :], 
-            #                         k_rvels[:, i+1, 1:, :])
+
             step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(local_spos, 
                                                                             local_kpos,
                                                                             local_srots,
@@ -341,14 +333,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                             local_kvels, 
                                                                             local_srvels, 
                                                                             local_krvels)
-            # step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(local_spos, 
-            #                                                     local_spos,
-            #                                                     local_srots,
-            #                                                     local_srots,
-            #                                                     local_svels, 
-            #                                                     local_svels, 
-            #                                                     local_srvels, 
-            #                                                     local_srvels)
             loss += step_loss
             lpos += raw_losses[0]
             lvel += raw_losses[1]
@@ -362,6 +346,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             step_lsreg /= 100
             lreg += step_lreg
             lsreg += step_lsreg
+            loss += step_lreg + step_lsreg
             
         update_stats = {"Policy/Loss": loss.item(),
                         "Policy/pos_loss": lpos.item(),
@@ -381,6 +366,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # copy policy to cpu 
         if self.split_actor_devices:
             self.policy.actor.load_state_dict(self.actor_gpu.state_dict())
+            # self.policy.actor.to("cpu")
         return update_stats
 
 
@@ -477,6 +463,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             conditional_sigma=conditional_sigma,
             tanh_squash=tanh_squash,
             deterministic=network_settings.deterministic,
+            init_near_zero=network_settings.init_near_zero,
         )
 
     def update_normalization(self, buffer: AgentBuffer) -> None:

@@ -1,4 +1,5 @@
 import abc
+from mimetypes import init
 from typing import List
 from mlagents.torch_utils import torch, nn
 import numpy as np
@@ -156,14 +157,16 @@ class GaussianDistribution(nn.Module):
         num_outputs: int,
         conditional_sigma: bool = False,
         tanh_squash: bool = False,
+        init_near_zero: bool = False,
     ):
         super().__init__()
         self.conditional_sigma = conditional_sigma
+        kernal_gain = 0.01 if init_near_zero else 0.2
         self.mu = linear_layer(
             hidden_size,
             num_outputs,
             kernel_init=Initialization.KaimingHeNormal,
-            kernel_gain=0.2,
+            kernel_gain=kernal_gain,
             bias_init=Initialization.Zero,
         )
         self.tanh_squash = tanh_squash

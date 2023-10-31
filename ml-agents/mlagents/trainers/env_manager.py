@@ -120,6 +120,10 @@ class EnvManager(ABC):
             except AgentManagerQueue.Empty:
                 if _policy is not None:
                     self.set_policy(brain_name, _policy)
+            except Exception as e:
+                logger.exception(
+                    f"Error when trying to get policy from queue for {brain_name}: {e}"
+                )
         # Step the environments
         new_step_infos = self._step()
         return new_step_infos

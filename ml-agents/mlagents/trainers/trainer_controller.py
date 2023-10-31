@@ -5,13 +5,18 @@
 import os
 import threading
 import time
+import trace
+import traceback
 from typing import Dict, Set, List
 from collections import defaultdict
+from sympy import Q
 import torch.multiprocessing as mp
 
 import numpy as np
 from mlagents.trainers import stats
+from mlagents.trainers import agent_processor
 from mlagents.trainers.stats import StatsReporter, StatsReporterCommand, StatsReporterMP, StatsSummary, StatsWriter
+from mlagents_envs import logging_util
 
 from mlagents_envs.logging_util import get_logger
 from mlagents.trainers.env_manager import EnvManager, EnvironmentStep
@@ -31,69 +36,10 @@ from mlagents.trainers.trainer import Trainer
 from mlagents.trainers.environment_parameter_manager import EnvironmentParameterManager
 from mlagents.trainers.trainer import TrainerFactory
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
-from mlagents.trainers.agent_processor import AgentManager
+from mlagents.trainers.agent_processor import AgentManager, AgentManagerQueue
 from mlagents import torch_utils
 from mlagents.torch_utils.globals import get_rank
 
-logger = get_logger(__name__)
-
-
-# def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter]):
-#     # Cannot use lambda functions in a multiprocessing context
-#     def _defaultdict_list():
-#         return defaultdict(list)
-    
-#     def _statsagg():
-#         return StatsAggregationMethod.AVERAGE
-    
-#     def _defaultdict_defaultdicts_statsagg():
-#         return defaultdict(_statsagg)
-    
-#     stats_dict: Dict[str, Dict[str, List]] = defaultdict(lambda: defaultdict(list))
-#     stats_aggregation: Dict[str, Dict[str, StatsAggregationMethod]] = defaultdict(
-#         lambda: defaultdict(lambda: StatsAggregationMethod.AVERAGE)
-#     )        
-
-#     try:
-#         while True:
-#             _queried = False
-#             while not queue.empty():
-#                 _queried = True
-#                 command, args = queue.get()
-#                 if command == StatsReporterCommand.ADD_STAT:
-#                     key, value, aggregation = args
-#                     stats_dict[category][key].append(value)
-#                     stats_aggregation[category][key] = aggregation
-#                 elif command == StatsReporterCommand.SET_STAT:
-#                     key, value = args
-#                     stats_dict[category][key] = [value]
-#                     stats_aggregation[category][key] = StatsAggregationMethod.MOST_RECENT
-#                 elif command == StatsReporterCommand.WRITE_STATS:
-#                     step = args
-#                     values: Dict[str, StatsSummary] = {}
-#                     for key in stats_dict[category]:
-#                         if len(stats_dict[category][key]) > 0:
-#                             stat_summary = StatsSummary(
-#                                 full_dist=stats_dict[category][key],
-#                                 aggregation_method=stats_aggregation[category][key],
-#                             )
-#                             values[key] = stat_summary
-#                     for writer in writers:
-#                         writer.write_stats(category, values, step)
-#                     del stats_dict[category]
-#                 elif command == StatsReporterCommand.ADD_PROPERTY:
-#                     property_type, value = args
-#                     for writer in writers:
-#                         writer.add_property(category, property_type, value)
-#             if not _queried:
-#                 time.sleep(.1)
-#     except(KeyboardInterrupt) as ex:
-#         logger.debug("StatsReporter shutting down.")
-#     except Exception as ex:
-#         logger.exception("An unexpected error occurred in the StatsReporter.")
-#     finally:
-#         logger.debug("StatsReporter closing.")
-#         queue.close()
 
 
 class TrainerController:
@@ -133,9 +79,8 @@ class TrainerController:
         np.random.seed(training_seed)
         torch_utils.torch.manual_seed(training_seed)
         self.rank = get_rank()
-
         self.first_update = True
-
+        self.multiprocess = False
 
     @timed
     def _save_models(self):
@@ -201,10 +146,11 @@ class TrainerController:
                 )
                 self.trainer_threads.append(trainerthread)
             elif trainer_config.use_pytorch_mp:
+                self.multiprocess = True
                 stats_queue = mp.Queue(maxsize=0)
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
-                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer,), daemon=True)
-                stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers), daemon=True)
+                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer,), daemon=True, name=f"trainer_process")
+                stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers), daemon=True, name=f"stats_reporter_process")
                 self.trainer_processes += [trainer_process, stats_reporter_process]
             else:
                 print(f"Running trainer on same thread & process as env manager")
@@ -237,6 +183,8 @@ class TrainerController:
         trainer.publish_policy_queue(agent_manager.policy_queue)
         trainer.subscribe_trajectory_queue(agent_manager.trajectory_queue)
 
+
+
         # Only start new trainers
         if trainerthread is not None or trainer.multiprocess:
             if trainerthread is not None:
@@ -265,7 +213,13 @@ class TrainerController:
             self._reset_env(env_manager)
             self.param_manager.log_current_lesson()
             while self._not_done_training():
-                n_steps = self.advance(env_manager)
+                try:
+                    n_steps = self.advance(env_manager)
+                except BrokenPipeError:
+                    # This block will catch the BrokenPipeError
+                    print("BrokenPipeError caught!")
+                    traceback.print_exc()  # This prints detailed traceback information
+                # n_steps = self.advance(env_manager)
                 for _ in range(n_steps):
                     self.reset_env_if_ready(env_manager)
             # Stop advancing trainers
@@ -289,8 +243,19 @@ class TrainerController:
                 # the exception so we exit the process with an return code of 1.
                 raise ex
         finally:
-            if self.train_model:
-                self._save_models()
+            # if self.train_model:
+            #     self._save_models()
+            # for t in self.trainers.values():
+            #     while True:
+            #         try:
+            #             t.trajectory_queues[0].get_nowait()
+            #         except AgentManagerQueue.Empty:
+            #             break
+            #     del t.optimizer.policy_optimizer
+            #     del t
+
+            self.logger.info("Learning was stopped. Main process exiting.")
+
 
     def end_trainer_episodes(self) -> None:
         # Reward buffers reset takes place only for curriculum learning
@@ -300,6 +265,8 @@ class TrainerController:
 
     def reset_env_if_ready(self, env: EnvManager) -> None:
         # Get the sizes of the reward buffers.
+        if self.multiprocess:
+            return
         reward_buff = {k: list(t.reward_buffer) for (k, t) in self.trainers.items()}
         curr_step = {k: int(t.get_step) for (k, t) in self.trainers.items()}
         max_step = {k: int(t.get_max_steps) for (k, t) in self.trainers.items()}
@@ -370,14 +337,19 @@ class TrainerController:
         """
         self.kill_trainers = True
 
-        for t in self.trainer_processes:
-            t.terminate()
-
-        for t in [self.trainer_threads, self.trainer_processes]:
+        for t in [*self.trainer_threads, *self.trainer_processes]:
             try:
                 t.join(timeout_seconds)
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.error(f"Trainer thread {t} threw an exception after {timeout_seconds} seconds")
+                self.logger.exception(e)
+            finally:
+                self.logger.debug(f"Trainer thread/process {t} joined")
+
+        self.logger.info("Killing trainers")
+        for t in self.trainer_processes:
+            t.close()
+        self.logger.info("Killing complete.")
 
         with hierarchical_timer("trainer_threads") as main_timer_node:
             for trainer_thread in self.trainer_threads:
@@ -398,10 +370,20 @@ class TrainerController:
 
     @staticmethod
     def trainer_process_update_func(trainer: Trainer) -> None:
+        logging_util.set_log_level(logging_util.INFO)
+        logger = get_logger(__name__)
         try:
             trainer._initialize()
         except Exception as e:
             print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
-        while True:
-            with hierarchical_timer("trainer_advance"):
-                trainer.advance()
+        try:
+            while True:
+                with hierarchical_timer("trainer_advance"):
+                    trainer.advance()
+        except(KeyboardInterrupt) as ex:
+            logger.debug("Trainer process shutting down.")
+        except Exception as ex:
+            logger.exception(f"An unexpected error occurred in the trainer process.: {ex}")
+        finally:
+            logger.info("Trainer process closing.")
+            del trainer 

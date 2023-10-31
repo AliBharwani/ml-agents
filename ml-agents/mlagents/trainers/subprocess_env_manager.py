@@ -14,7 +14,7 @@ from mlagents_envs.exception import (
 )
 # from multiprocessing import Process, Pipe, Queue
 from torch.multiprocessing import Process, Pipe, Queue
-from multiprocessing.connection import Connection
+# from multiprocessing.connection import Connection
 from queue import Empty as EmptyQueueException
 from mlagents_envs.base_env import BaseEnv, BehaviorName, BehaviorSpec
 from mlagents_envs import logging_util
@@ -110,16 +110,16 @@ class UnityEnvWorker:
     def request_close(self):
         try:
             self.conn.send(EnvironmentRequest(EnvironmentCommand.CLOSE))
-        except (BrokenPipeError, EOFError):
+        except (BrokenPipeError, EOFError) as e:
             logger.debug(
-                f"UnityEnvWorker {self.worker_id} got exception trying to close."
+                f"UnityEnvWorker {self.worker_id} got exception trying to close.: {e}"
             )
             pass
 
 
 def worker(
-    # parent_conn: Connection,
     parent_conn,
+    # parent_conn: Connection,
     step_queue: Queue,
     pickled_env_factory: str,
     worker_id: int,
@@ -247,9 +247,14 @@ def worker(
         if env is not None:
             env.close()
         logger.debug(f"UnityEnvironment worker {worker_id} done.")
-        parent_conn.close()
-        step_queue.put(EnvironmentResponse(EnvironmentCommand.CLOSED, worker_id, None))
-        step_queue.close()
+        try:
+            parent_conn.close()
+            step_queue.put(EnvironmentResponse(EnvironmentCommand.CLOSED, worker_id, None))
+            step_queue.close()
+        except Exception as e:
+            logger.exception(
+                f"UnityEnvWorker {worker_id} got exception trying to close.: {e}"
+            )
 
 
 class SubprocessEnvManager(EnvManager):
@@ -504,6 +509,7 @@ class SubprocessEnvManager(EnvManager):
             except EmptyQueueException:
                 pass
         self.step_queue.close()
+        
         # Sanity check to kill zombie workers and report an issue if they occur.
         if self.workers_alive > 0:
             logger.error("SubprocessEnvManager had workers that didn't signal shutdown")
@@ -514,6 +520,12 @@ class SubprocessEnvManager(EnvManager):
                         "A SubprocessEnvManager worker did not shut down correctly so it was forcefully terminated."
                     )
         self.step_queue.join_thread()
+
+        for manager in self.agent_managers.values():
+            manager.policy_queue.close()
+            manager.trajectory_queue.close()
+            manager.policy_queue.join_thread()
+            manager.trajectory_queue.join_thread()
 
     def _postprocess_steps(
         self, env_steps: List[EnvironmentResponse]

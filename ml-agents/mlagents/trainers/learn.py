@@ -1,4 +1,5 @@
 # # Unity ML-Agents Toolkit
+from sympy import E
 from mlagents import torch_utils
 import yaml
 
@@ -137,10 +138,11 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
         tc.start_learning(env_manager)
     finally:
         env_manager.close()
+        # del env_manager
         write_run_options(checkpoint_settings.write_path, options)
         write_timing_tree(run_logs_dir)
         write_training_status(run_logs_dir)
-
+        print("===================================== FINISHED EVERYTHING! ===================================== ")
 
 def write_run_options(output_dir: str, run_options: RunOptions) -> None:
     run_options_path = os.path.join(output_dir, "configuration.yaml")

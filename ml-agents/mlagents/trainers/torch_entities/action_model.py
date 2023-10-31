@@ -34,6 +34,7 @@ class ActionModel(nn.Module):
         conditional_sigma: bool = False,
         tanh_squash: bool = False,
         deterministic: bool = False,
+        init_near_zero: bool = False,
     ):
         """
         A torch module that represents the action space of a policy. The ActionModel may contain
@@ -59,6 +60,7 @@ class ActionModel(nn.Module):
                 self.action_spec.continuous_size,
                 conditional_sigma=conditional_sigma,
                 tanh_squash=tanh_squash,
+                init_near_zero=init_near_zero,
             )
 
         if self.action_spec.discrete_size > 0:

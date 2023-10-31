@@ -144,6 +144,7 @@ class NetworkSettings:
     input_size : int = -1
     output_size : int = -1
     batch_size : int = 1024
+    init_near_zero : bool = False
     normalize: bool = False
     learning_rate: float = 3.0e-4
     hidden_units: int = 128
