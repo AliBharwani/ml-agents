@@ -432,6 +432,9 @@ class AgentManagerQueue(Generic[T]):
     def join_thread(self):
         self._queue.join_thread()
 
+    def cancel_join_thread(self):
+        self._queue.cancel_join_thread()
+
 class AgentManager(AgentProcessor):
     """
     An AgentManager is an AgentProcessor that also holds a single trajectory and policy queue.
@@ -450,6 +453,7 @@ class AgentManager(AgentProcessor):
     ):
         super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
         trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
+        # trajectory_queue_len =  0
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
             self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp
         )

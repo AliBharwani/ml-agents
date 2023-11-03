@@ -443,7 +443,7 @@ class UnityEnvironment(BaseEnv):
                 self._process.wait(timeout=timeout)
                 logger.debug(self._returncode_to_env_message(self._process.returncode))
             except subprocess.TimeoutExpired:
-                logger.warning("Environment timed out shutting down. Killing...")
+                logger.exception("Environment timed out shutting down. Killing...")
                 self._process.kill()
             # Set to None so we don't try to close multiple times.
             self._process = None

@@ -493,11 +493,11 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
     except Exception as ex:
         logger.exception("An unexpected error occurred in the StatsReporter.")
     finally:
-        while not queue.empty(): #_q is a multiprocess.Queue object used to communicate inter-process
-            try:
-                queue.get(timeout=0.001)
-            except:
-                pass
+        # while not queue.empty(): #_q is a multiprocess.Queue object used to communicate inter-process
+        #     try:
+        #         queue.get(timeout=0.001)
+        #     except:
+        #         pass
         queue.close()
         queue.join_thread()
         logger.info("StatsReporter closing.")

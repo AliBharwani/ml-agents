@@ -6,6 +6,7 @@ import yaml
 import os
 import numpy as np
 import json
+import threading
 
 from typing import Callable, Optional, List
 
@@ -23,6 +24,7 @@ from mlagents.trainers.stats import StatsReporter
 from mlagents.trainers.cli_utils import parser
 from mlagents_envs.environment import UnityEnvironment
 from mlagents.trainers.settings import RunOptions
+import torch.multiprocessing as mp
 
 from mlagents.trainers.training_status import GlobalTrainingStatus
 from mlagents_envs.base_env import BaseEnv
@@ -137,12 +139,33 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
     try:
         tc.start_learning(env_manager)
     finally:
-        env_manager.close()
-        # del env_manager
-        write_run_options(checkpoint_settings.write_path, options)
-        write_timing_tree(run_logs_dir)
-        write_training_status(run_logs_dir)
-        print("===================================== FINISHED EVERYTHING! ===================================== ")
+        try:
+            env_manager.close()
+            # del env_manager
+            write_run_options(checkpoint_settings.write_path, options)
+            write_timing_tree(run_logs_dir)
+            write_training_status(run_logs_dir)
+            active_children = mp.active_children()
+            print(f"ALL ACTIVE CHILDREN: {len(active_children)}")
+            for child in active_children:
+                # print(f"Name: {child.name} | PID: {child.pid} | Exit Code: {child.exitcode}")
+                print(child)
+                joined = child.join(3)
+                if joined is None:
+                    logger.debug(f"Failed to join child {child.name} with PID {child.pid}")
+                    child.terminate()
+            #     child.join()
+
+            # active_children = mp.active_children()
+            print(f"ALL ACTIVE CHILDREN: {len(active_children)}")
+            active_threads = threading.enumerate()
+            # Print information about each active thread
+            for thread in active_threads:
+                print(f"Thread Name: {thread.getName()}, Thread ID: {thread.ident} Daemon: {thread.daemon}")
+        except Exception as e:
+            logger.exception(f"Error when ending main process in learn.py . {e}")
+        finally:
+            print("===================================== FINISHED EVERYTHING! ===================================== ")
 
 def write_run_options(output_dir: str, run_options: RunOptions) -> None:
     run_options_path = os.path.join(output_dir, "configuration.yaml")

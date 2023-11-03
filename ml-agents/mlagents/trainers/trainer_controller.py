@@ -81,6 +81,7 @@ class TrainerController:
         self.rank = get_rank()
         self.first_update = True
         self.multiprocess = False
+        self.stats_queue = None
 
     @timed
     def _save_models(self):
@@ -148,6 +149,7 @@ class TrainerController:
             elif trainer_config.use_pytorch_mp:
                 self.multiprocess = True
                 stats_queue = mp.Queue(maxsize=0)
+                self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
                 trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer,), daemon=True, name=f"trainer_process")
                 stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers), daemon=True, name=f"stats_reporter_process")
@@ -309,6 +311,12 @@ class TrainerController:
                 with hierarchical_timer("trainer_advance"):
                     trainer.advance()
 
+        if self.first_update:
+            active_children = mp.active_children()
+            print(f"ALL ACTIVE CHILDREN: {len(active_children)}")
+            for child in active_children:
+                # print(f"Name: {child.name} | PID: {child.pid} | Exit Code: {child.exitcode}")
+                print(child)
 
         self.first_update = False
         return num_steps
@@ -350,7 +358,9 @@ class TrainerController:
         for t in self.trainer_processes:
             t.close()
         self.logger.info("Killing complete.")
-
+        if self.stats_queue is not None:
+            self.logger.info("Closing stats queue")
+            self.stats_queue.close()
         with hierarchical_timer("trainer_threads") as main_timer_node:
             for trainer_thread in self.trainer_threads:
                 thread_timer_stack = get_timer_stack_for_thread(trainer_thread)
@@ -386,4 +396,6 @@ class TrainerController:
             logger.exception(f"An unexpected error occurred in the trainer process.: {ex}")
         finally:
             logger.info("Trainer process closing.")
+            for traj_q in trainer.trajectory_queues:
+                traj_q.close()
             del trainer 
