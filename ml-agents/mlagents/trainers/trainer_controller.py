@@ -231,8 +231,9 @@ class TrainerController:
             UnityCommunicationException,
             UnityEnvironmentException,
             UnityCommunicatorStoppedException,
+            Exception,
         ) as ex:
-            self.join_threads()
+            # self.join_threads()
             self.logger.info(
                 "Learning was interrupted. Please wait while the graph is generated."
             )
@@ -243,7 +244,9 @@ class TrainerController:
             else:
                 # If the environment failed, we want to make sure to raise
                 # the exception so we exit the process with an return code of 1.
+                self.join_threads()
                 raise ex
+            self.join_threads()
         finally:
             # if self.train_model:
             #     self._save_models()
@@ -255,7 +258,7 @@ class TrainerController:
             #             break
             #     del t.optimizer.policy_optimizer
             #     del t
-
+            # del self.trainers
             self.logger.info("Learning was stopped. Main process exiting.")
 
 
@@ -344,7 +347,9 @@ class TrainerController:
         :return:
         """
         self.kill_trainers = True
-
+        for trainer in self.trainers.values():
+            for traj_q in trainer.trajectory_queues:
+                traj_q.close()
         for t in [*self.trainer_threads, *self.trainer_processes]:
             try:
                 t.join(timeout_seconds)
@@ -398,4 +403,4 @@ class TrainerController:
             logger.info("Trainer process closing.")
             for traj_q in trainer.trajectory_queues:
                 traj_q.close()
-            del trainer 
+            # del trainer 

@@ -30,7 +30,7 @@ def validate_environment_path(env_path: str) -> Optional[str]:
         .replace(".x86", "")
     )
     true_filename = os.path.basename(os.path.normpath(env_path))
-    logger.debug(f"The true file name is {true_filename}")
+    # logger.debug(f"The true file name is {true_filename}")
 
     if not (glob.glob(env_path) or glob.glob(env_path + ".*")):
         return None

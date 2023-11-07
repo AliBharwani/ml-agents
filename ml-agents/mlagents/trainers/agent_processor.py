@@ -1,10 +1,17 @@
+import atexit
+import multiprocessing
+import pdb
 import sys
 import traceback
 import numpy as np
 from typing import List, Dict, TypeVar, Generic, Tuple, Any, Union
 from collections import defaultdict, Counter
 import queue
+
+from sympy import use
 from mlagents.torch_utils import torch
+from mlagents.trainers.supertrack import mp_queue
+from mlagents_envs import logging_util
 
 from mlagents_envs.base_env import (
     ActionTuple,
@@ -33,7 +40,7 @@ from mlagents.trainers.torch_entities.utils import ModelUtils
 
 T = TypeVar("T")
 
-
+logger = logging_util.get_logger(__name__)
 class AgentProcessor:
     """
     AgentProcessor contains a dictionary per-agent trajectory buffers. The buffers are indexed by agent_id.
@@ -304,7 +311,7 @@ class AgentProcessor:
                     behavior_id=self._behavior_id,
                 )
                 for traj_queue in self._trajectory_queues:
-                    traj_queue.put(trajectory)
+                    traj_queue.put(trajectory, block=True)
                 self._experience_buffers[global_agent_id] = []
                 # print(f"Agent {global_agent_id} terminated at: {self._episode_steps.get(global_agent_id, 0)} steps")
             if terminated:
@@ -371,17 +378,37 @@ class AgentManagerQueue(Generic[T]):
 
         pass
 
-    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False):
+    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False, use_debug_queue: bool = False):
         """
         Initializes an AgentManagerQueue. Note that we can give it a behavior_id so that it can be identified
         separately from an AgentManager.
         """
         self._maxlen: int = maxlen
+        self.use_pytorch_mp = use_pytorch_mp
+
         if use_pytorch_mp:
-            self._queue: torch.multiprocessing.Queue = torch.multiprocessing.Queue(maxsize=maxlen)
+            # self._queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=maxlen)
+            if use_debug_queue:
+                self._queue = mp_queue.Queue(maxsize=maxlen)
+                atexit.register(self._close)
+            else:
+                self._queue = multiprocessing.Queue(maxsize=maxlen)
         else:
             self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
         self._behavior_id = behavior_id
+
+
+    def _close(self):
+        print("AT EXIT ON QUEUE CALLED")
+        # print("QUEUE LOCK OWNED BY: ")
+        print(self._queue._rlock)
+        print(self._queue._thread)
+        print("last action", self._queue._last_action)
+        # if (self._queue._thread is not None):
+        #     pdb.set_trace()
+        # if self.use_pytorch_mp:
+            # self._queue.close()
+            # del self._queue
 
     @property
     def maxlen(self):
@@ -419,12 +446,12 @@ class AgentManagerQueue(Generic[T]):
         except queue.Empty:
             raise self.Empty("The AgentManagerQueue is empty.")
 
-    def put(self, item: T) -> None:
-        # try:
-        self._queue.put(item)
-        # except BrokenPipeError as e:
-        #     print(f"BrokenPipeError: {e}")
-        #     traceback.print_exc()
+    def put(self, item: T, block : bool = True) -> None:
+        try:
+            self._queue.put(item, block=block), 
+        except Exception as e:
+            logger.error(f"failed to put item in queue: {e}")
+            print(f"failed to put item in queue: {e}")
 
     def close(self):
         self._queue.close()
@@ -453,9 +480,9 @@ class AgentManager(AgentProcessor):
     ):
         super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
         trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
-        # trajectory_queue_len =  0
+        trajectory_queue_len =  0
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
-            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp
+            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, use_debug_queue=False
         )
         # NOTE: we make policy queues of infinite length to avoid lockups of the trainers.
         # In the environment manager, we make sure to empty the policy queue before continuing to produce steps.

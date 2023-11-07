@@ -1,4 +1,5 @@
 # # Unity ML-Agents Toolkit
+import time
 from sympy import E
 from mlagents import torch_utils
 import yaml
@@ -162,10 +163,21 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
             # Print information about each active thread
             for thread in active_threads:
                 print(f"Thread Name: {thread.getName()}, Thread ID: {thread.ident} Daemon: {thread.daemon}")
+                if thread.getName() == "MainThread":
+                    continue
+                # while True:
+                #     logger.debug(f"Attempting to join thread {thread.getName()} for 5 seconds")
+                #     thread.join(5)
+                    
+                #     if not thread.is_alive():
+                #         break
         except Exception as e:
             logger.exception(f"Error when ending main process in learn.py . {e}")
         finally:
+            # time.sleep(5)
             print("===================================== FINISHED EVERYTHING! ===================================== ")
+            exit()
+
 
 def write_run_options(output_dir: str, run_options: RunOptions) -> None:
     run_options_path = os.path.join(output_dir, "configuration.yaml")
