@@ -1,7 +1,10 @@
 import atexit
 import multiprocessing
+import os
+# import multiprocessing
 import pdb
 import sys
+import time
 import traceback
 import numpy as np
 from typing import List, Dict, TypeVar, Generic, Tuple, Any, Union
@@ -378,11 +381,15 @@ class AgentManagerQueue(Generic[T]):
 
         pass
 
-    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False, use_debug_queue: bool = False):
+    def __repr__(self) -> str:
+        return self.name or super().__repr__()
+
+    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False, use_debug_queue: bool = False, name : str = None):
         """
         Initializes an AgentManagerQueue. Note that we can give it a behavior_id so that it can be identified
         separately from an AgentManager.
         """
+        self.name = name
         self._maxlen: int = maxlen
         self.use_pytorch_mp = use_pytorch_mp
 
@@ -390,9 +397,10 @@ class AgentManagerQueue(Generic[T]):
             # self._queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=maxlen)
             if use_debug_queue:
                 self._queue = mp_queue.Queue(maxsize=maxlen)
+                # self._queue = mp_queue.BaseQueue(maxsize=maxlen, ctx=multiprocessing.get_context())
                 atexit.register(self._close)
             else:
-                self._queue = multiprocessing.Queue(maxsize=maxlen)
+                self._queue = torch.multiprocessing.Queue(maxsize=maxlen)
         else:
             self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
         self._behavior_id = behavior_id
@@ -400,10 +408,17 @@ class AgentManagerQueue(Generic[T]):
 
     def _close(self):
         print("AT EXIT ON QUEUE CALLED")
+        try: 
         # print("QUEUE LOCK OWNED BY: ")
-        print(self._queue._rlock)
-        print(self._queue._thread)
-        print("last action", self._queue._last_action)
+            print(self._queue._rlock)
+            print(self._queue._thread)
+            print(f"PID: {os.getpid()} parent PID: {os.getppid()}")
+            print("last action", self._queue._last_action)
+            print("self._last_object = obj.__class__.__name__", self._queue._last_object)
+            self._queue._terminate_broken()
+            print("Terminated")
+        except Exception as e:
+            print(f"failed to print queue info: {e}")
         # if (self._queue._thread is not None):
         #     pdb.set_trace()
         # if self.use_pytorch_mp:
@@ -445,6 +460,10 @@ class AgentManagerQueue(Generic[T]):
             return self._queue.get_nowait()
         except queue.Empty:
             raise self.Empty("The AgentManagerQueue is empty.")
+        except Exception as e:
+            print(f"failed to get item from queue: {e}")
+            raise e
+            time.sleep(.1)
 
     def put(self, item: T, block : bool = True) -> None:
         try:
@@ -482,12 +501,12 @@ class AgentManager(AgentProcessor):
         trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
         trajectory_queue_len =  0
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
-            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, use_debug_queue=False
+            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, use_debug_queue=True, name = "trajectory_queue"
         )
         # NOTE: we make policy queues of infinite length to avoid lockups of the trainers.
         # In the environment manager, we make sure to empty the policy queue before continuing to produce steps.
         self.policy_queue: AgentManagerQueue[Policy] = AgentManagerQueue(
-            self._behavior_id, maxlen=0, use_pytorch_mp=use_pytorch_mp
+            self._behavior_id, maxlen=0, use_pytorch_mp=use_pytorch_mp, use_debug_queue=True, name = "policy_queue"
         )
         self.publish_trajectory_queue(self.trajectory_queue)
 

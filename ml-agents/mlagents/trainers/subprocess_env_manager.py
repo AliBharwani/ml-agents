@@ -559,18 +559,21 @@ class SubprocessEnvManager(EnvManager):
             
 
             for q in [manager.policy_queue, manager.trajectory_queue]:
-            # for q in [manager.trajectory_queue, manager.policy_queue]:
             #     q.cancel_join_thread()
-            #     # while not q.empty():
-            #     #     try:
-            #     #         q.get_nowait()  # Get an item from the queue without blocking
-            #     #     except q.Empty:
-            #     #         break  # Queue is empty
-            #     # time.sleep(.1)
-                # logger.debug(f"Closing queue {q}")
+                logger.debug(f"Closing queue {q}")
+                
+                while not q.empty():
+                    try:
+                        q.get_nowait()  # Get an item from the queue without blocking
+                    except q.Empty:
+                        break  # Queue is empty
+                    except Exception as e:
+                        print(f"Failed to empty {q}: \n{e}")
+                        break
+                q.close()
+                logger.debug(f"Closed queue {q}")
                 # del q
                 pass
-            #     q.close()
             #     q.join_thread()
             pass
         # except Exception as e:

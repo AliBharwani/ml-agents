@@ -174,7 +174,6 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
         except Exception as e:
             logger.exception(f"Error when ending main process in learn.py . {e}")
         finally:
-            # time.sleep(5)
             print("===================================== FINISHED EVERYTHING! ===================================== ")
             exit()
 

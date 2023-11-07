@@ -487,7 +487,8 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
                     for writer in writers:
                         writer.add_property(category, property_type, value)
             if not _queried:
-                time.sleep(.1)
+                # Yield thread to avoid busy-waiting
+                time.sleep(.001)
     except(KeyboardInterrupt) as ex:
         logger.debug("StatsReporter shutting down.")
     except Exception as ex:
