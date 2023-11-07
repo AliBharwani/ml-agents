@@ -1,6 +1,4 @@
 # # Unity ML-Agents Toolkit
-import time
-from sympy import E
 from mlagents import torch_utils
 import yaml
 
@@ -142,40 +140,23 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
     finally:
         try:
             env_manager.close()
-            # del env_manager
             write_run_options(checkpoint_settings.write_path, options)
             write_timing_tree(run_logs_dir)
             write_training_status(run_logs_dir)
             active_children = mp.active_children()
-            print(f"ALL ACTIVE CHILDREN: {len(active_children)}")
             for child in active_children:
-                # print(f"Name: {child.name} | PID: {child.pid} | Exit Code: {child.exitcode}")
-                print(child)
                 joined = child.join(3)
                 if joined is None:
-                    logger.debug(f"Failed to join child {child.name} with PID {child.pid}")
+                    logger.info(f"Failed to join child {child.name} with PID {child.pid}. Terminating")
                     child.terminate()
-            #     child.join()
-
-            # active_children = mp.active_children()
-            print(f"ALL ACTIVE CHILDREN: {len(active_children)}")
+                child.close()
             active_threads = threading.enumerate()
-            # Print information about each active thread
             for thread in active_threads:
-                print(f"Thread Name: {thread.getName()}, Thread ID: {thread.ident} Daemon: {thread.daemon}")
-                if thread.getName() == "MainThread":
-                    continue
-                # while True:
-                #     logger.debug(f"Attempting to join thread {thread.getName()} for 5 seconds")
-                #     thread.join(5)
-                    
-                #     if not thread.is_alive():
-                #         break
+                logger.debug(f"Thread Name: {thread.getName()}, Thread ID: {thread.ident} Daemon: {thread.daemon}")
         except Exception as e:
             logger.exception(f"Error when ending main process in learn.py . {e}")
         finally:
-            print("===================================== FINISHED EVERYTHING! ===================================== ")
-            exit()
+            print("===================================== MAIN PROCESS EXITING ===================================== ")
 
 
 def write_run_options(output_dir: str, run_options: RunOptions) -> None:

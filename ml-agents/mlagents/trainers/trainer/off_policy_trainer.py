@@ -222,8 +222,6 @@ class OffPolicyTrainer(RLTrainer):
                 update_stats = self.optimizer.bc_module.update()
                 for stat, val in update_stats.items():
                     self._stats_reporter.add_stat(stat, val)
-        if has_updated:
-            print(f"Update steps: {self.update_steps}")
 
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.

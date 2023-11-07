@@ -47,7 +47,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
         super().__init__(policy, trainer_settings)
         self.trainer_settings = trainer_settings
-        print(f"TorchSuperTrackOptimizer is on thread: {threading.current_thread().name}")
 
         self.hyperparameters: SuperTrackSettings = cast(
             SuperTrackSettings, trainer_settings.hyperparameters
@@ -92,8 +91,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     @timed
     def update_world_model(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
         if self.first_update:
-            # self._init_world_model()
-            print(f"Updating on thread: {threading.current_thread().name}")
             self.check_wm_layernorm("On First Update")
             self.first_update = False
         self.check_wm_layernorm(f"At start of update_world_model")

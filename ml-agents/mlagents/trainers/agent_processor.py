@@ -314,7 +314,7 @@ class AgentProcessor:
                     behavior_id=self._behavior_id,
                 )
                 for traj_queue in self._trajectory_queues:
-                    traj_queue.put(trajectory, block=True)
+                    traj_queue.put(trajectory)
                 self._experience_buffers[global_agent_id] = []
                 # print(f"Agent {global_agent_id} terminated at: {self._episode_steps.get(global_agent_id, 0)} steps")
             if terminated:
@@ -384,7 +384,7 @@ class AgentManagerQueue(Generic[T]):
     def __repr__(self) -> str:
         return self.name or super().__repr__()
 
-    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False, use_debug_queue: bool = False, name : str = None):
+    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False, name : str = None):
         """
         Initializes an AgentManagerQueue. Note that we can give it a behavior_id so that it can be identified
         separately from an AgentManager.
@@ -394,36 +394,18 @@ class AgentManagerQueue(Generic[T]):
         self.use_pytorch_mp = use_pytorch_mp
 
         if use_pytorch_mp:
-            # self._queue: multiprocessing.Queue = multiprocessing.Queue(maxsize=maxlen)
-            if use_debug_queue:
-                self._queue = mp_queue.Queue(maxsize=maxlen)
-                # self._queue = mp_queue.BaseQueue(maxsize=maxlen, ctx=multiprocessing.get_context())
-                atexit.register(self._close)
-            else:
-                self._queue = torch.multiprocessing.Queue(maxsize=maxlen)
+            self._queue = mp_queue.TorchQueue(maxsize=maxlen)
+            atexit.register(self._onexit)
         else:
             self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
         self._behavior_id = behavior_id
 
-
-    def _close(self):
-        print("AT EXIT ON QUEUE CALLED")
+    def _onexit(self):
         try: 
-        # print("QUEUE LOCK OWNED BY: ")
-            print(self._queue._rlock)
-            print(self._queue._thread)
-            print(f"PID: {os.getpid()} parent PID: {os.getppid()}")
-            print("last action", self._queue._last_action)
-            print("self._last_object = obj.__class__.__name__", self._queue._last_object)
             self._queue._terminate_broken()
-            print("Terminated")
+            print(f"Terminated broken queue: {self.name}")
         except Exception as e:
-            print(f"failed to print queue info: {e}")
-        # if (self._queue._thread is not None):
-        #     pdb.set_trace()
-        # if self.use_pytorch_mp:
-            # self._queue.close()
-            # del self._queue
+            print(f"failed to terminate queue {self.name}: {e}")
 
     @property
     def maxlen(self):
@@ -463,7 +445,6 @@ class AgentManagerQueue(Generic[T]):
         except Exception as e:
             print(f"failed to get item from queue: {e}")
             raise e
-            time.sleep(.1)
 
     def put(self, item: T, block : bool = True) -> None:
         try:
@@ -499,14 +480,13 @@ class AgentManager(AgentProcessor):
     ):
         super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
         trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
-        trajectory_queue_len =  0
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
-            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, use_debug_queue=True, name = "trajectory_queue"
+            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, name = "trajectory_queue"
         )
         # NOTE: we make policy queues of infinite length to avoid lockups of the trainers.
         # In the environment manager, we make sure to empty the policy queue before continuing to produce steps.
         self.policy_queue: AgentManagerQueue[Policy] = AgentManagerQueue(
-            self._behavior_id, maxlen=0, use_pytorch_mp=use_pytorch_mp, use_debug_queue=True, name = "policy_queue"
+            self._behavior_id, maxlen=0, use_pytorch_mp=use_pytorch_mp, name = "policy_queue"
         )
         self.publish_trajectory_queue(self.trajectory_queue)
 

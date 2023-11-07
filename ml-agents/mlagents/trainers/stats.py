@@ -494,11 +494,6 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
     except Exception as ex:
         logger.exception("An unexpected error occurred in the StatsReporter.")
     finally:
-        # while not queue.empty(): #_q is a multiprocess.Queue object used to communicate inter-process
-        #     try:
-        #         queue.get(timeout=0.001)
-        #     except:
-        #         pass
         queue.close()
         queue.join_thread()
         logger.info("StatsReporter closing.")
@@ -534,26 +529,21 @@ class StatsReporterMP(StatsReporterABC):
             self.queue.put((StatsReporterCommand.ADD_STAT, (key, value, aggregation)))
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
-        # self.queue.put((StatsReporterCommand.ADD_STAT, (key, value, aggregation)))
 
     def set_stat(self, key: str, value: float) -> None:
         try:
             self.queue.put((StatsReporterCommand.SET_STAT, (key, value)))
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
-        # self.queue.put((StatsReporterCommand.SET_STAT, (key, value)))
 
     def write_stats(self, step: int) -> None:
         try:
             self.queue.put((StatsReporterCommand.WRITE_STATS, (step)))
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
-        # self.queue.put((StatsReporterCommand.WRITE_STATS, (step)))
 
     def add_property(self, property_type: StatsPropertyType, value: Any) -> None:
-
         try:
             self.queue.put((StatsReporterCommand.ADD_PROPERTY, (property_type, value)))
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
-        # self.queue.put((StatsReporterCommand.ADD_PROPERTY, (property_type, value)))

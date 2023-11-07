@@ -261,24 +261,12 @@ def worker(
             parent_conn.close()
             step_queue.put(EnvironmentResponse(EnvironmentCommand.CLOSED, worker_id, None))
             step_queue.close()
-            # This should happen automatically unless cancel_join_thread is called
-            # step_queue.join_thread()
         except Exception as e:
             logger.exception(
                 f"UnityEnvWorker {worker_id} got exception trying to close.: {e}"
             )
 
-# class CustomQueue(Queue):
-#     def __init__(self):
-#         super().__init__()
-#         self.is_closed = False
 
-#     def close(self):
-#         super().close()
-#         self.is_closed = True
-
-#     def is_queue_closed(self):
-#         return self.is_closed
 
 class SubprocessEnvManager(EnvManager):
     def __init__(
@@ -530,13 +518,10 @@ class SubprocessEnvManager(EnvManager):
                 if step.cmd == EnvironmentCommand.CLOSED and not env_worker.closed:
                     env_worker.closed = True
                     self.workers_alive -= 1
-                    # env_worker.join_worker(WORKER_SHUTDOWN_TIMEOUT_S)
-                    # logger.debug(f"Joining worker {env_worker.worker_id}")
                 # Discard all other messages.
             except EmptyQueueException:
                 pass
         self.step_queue.close()
-        
         # Sanity check to kill zombie workers and report an issue if they occur.
         if self.workers_alive > 0:
             logger.error("SubprocessEnvManager had workers that didn't signal shutdown")
@@ -546,44 +531,7 @@ class SubprocessEnvManager(EnvManager):
                     logger.error(
                         "A SubprocessEnvManager worker did not shut down correctly so it was forcefully terminated."
                     )
-        # for env_worker in self.env_workers:
-        #     if env_worker.process.is_alive():
-        #         env_worker.process.join()
-        #         logger.error(
-        #             f"A SubprocessEnvManager worker {env_worker.worker_id} did not shut down correctly so it was forcefully terminated."
-        #         )
         self.step_queue.join_thread()
-        # try:
-        for manager in self.agent_managers.values():
-            # , manager.trajectory_queue
-            
-
-            for q in [manager.policy_queue, manager.trajectory_queue]:
-            #     q.cancel_join_thread()
-                logger.debug(f"Closing queue {q}")
-                
-                while not q.empty():
-                    try:
-                        q.get_nowait()  # Get an item from the queue without blocking
-                    except q.Empty:
-                        break  # Queue is empty
-                    except Exception as e:
-                        print(f"Failed to empty {q}: \n{e}")
-                        break
-                q.close()
-                logger.debug(f"Closed queue {q}")
-                # del q
-                pass
-            #     q.join_thread()
-            pass
-        # except Exception as e:
-        #     logger.exception(
-        #         f"SubprocessEnvManager got exception trying to close: {e}"
-        #     )
-        # manager.policy_queue.close()
-        # manager.trajectory_queue.close()
-        # manager.policy_queue.join_thread()
-        # manager.trajectory_queue.join_thread()
 
     def _postprocess_steps(
         self, env_steps: List[EnvironmentResponse]

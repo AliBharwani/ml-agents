@@ -55,11 +55,10 @@ def set_torch_config(torch_settings: TorchSettings) -> None:
     #     torch.set_default_tensor_type(torch.cuda.FloatTensor)
     # else:
     #     torch.set_default_tensor_type(torch.FloatTensor)
+    torch.set_default_dtype(torch.float32)  # Set the default data type to float32
     if _device.type == "cuda":
-        torch.set_default_dtype(torch.float32)  # Set the default data type to float32
         torch.set_default_device("cuda")  # Set the default device to CUDA (GPU)
     else:
-        torch.set_default_dtype(torch.float32)  # Set the default data type to float32
         torch.set_default_device("cpu")  # Set the default device to CPU
 
     if torch_settings.anomaly:

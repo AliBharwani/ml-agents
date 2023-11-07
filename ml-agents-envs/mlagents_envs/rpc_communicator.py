@@ -27,8 +27,12 @@ class UnityToExternalServicerImplementation(UnityToExternalProtoServicer):
         return self.child_conn.recv()
 
     def Exchange(self, request, context):
-        self.child_conn.send(request)
-        return self.child_conn.recv()
+        try:
+            self.child_conn.send(request)
+            return self.child_conn.recv()
+        except Exception as e:
+            print(f"Failed to Exchange request with Unity external service: {e}")
+            return UnityMessageProto()
 
 
 class RpcCommunicator(Communicator):

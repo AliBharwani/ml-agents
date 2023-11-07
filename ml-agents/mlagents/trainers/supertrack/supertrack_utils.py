@@ -368,9 +368,6 @@ class SupertrackUtils:
         return_tensors = [local_pos, return_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
         # Have to reshape instead of view because stride can be messed up in some cases
-        # return [tensor.reshape(B, -1) for tensor in return_tensors]
-        # for tensor, name in return_tensors:
-        #     print(f"{name} dtype: {tensor.dtype}")
         if unzip_to_batchsize:
             return [t.reshape(B, -1) for t in return_tensors]
         else:

@@ -185,8 +185,6 @@ class TrainerController:
         trainer.publish_policy_queue(agent_manager.policy_queue)
         trainer.subscribe_trajectory_queue(agent_manager.trajectory_queue)
 
-
-
         # Only start new trainers
         if trainerthread is not None or trainer.multiprocess:
             if trainerthread is not None:
@@ -215,13 +213,7 @@ class TrainerController:
             self._reset_env(env_manager)
             self.param_manager.log_current_lesson()
             while self._not_done_training():
-                try:
-                    n_steps = self.advance(env_manager)
-                except BrokenPipeError:
-                    # This block will catch the BrokenPipeError
-                    print("BrokenPipeError caught!")
-                    traceback.print_exc()  # This prints detailed traceback information
-                # n_steps = self.advance(env_manager)
+                n_steps = self.advance(env_manager)
                 for _ in range(n_steps):
                     self.reset_env_if_ready(env_manager)
             # Stop advancing trainers
@@ -233,7 +225,7 @@ class TrainerController:
             UnityCommunicatorStoppedException,
             Exception,
         ) as ex:
-            # self.join_threads()
+            self.join_threads()
             self.logger.info(
                 "Learning was interrupted. Please wait while the graph is generated."
             )
@@ -244,21 +236,10 @@ class TrainerController:
             else:
                 # If the environment failed, we want to make sure to raise
                 # the exception so we exit the process with an return code of 1.
-                self.join_threads()
                 raise ex
-            self.join_threads()
         finally:
             # if self.train_model:
             #     self._save_models()
-            # for t in self.trainers.values():
-            #     while True:
-            #         try:
-            #             t.trajectory_queues[0].get_nowait()
-            #         except AgentManagerQueue.Empty:
-            #             break
-            #     del t.optimizer.policy_optimizer
-            #     del t
-            # del self.trainers
             self.logger.info("Learning was stopped. Main process exiting.")
 
 
@@ -270,8 +251,6 @@ class TrainerController:
 
     def reset_env_if_ready(self, env: EnvManager) -> None:
         # Get the sizes of the reward buffers.
-        if self.multiprocess:
-            return
         reward_buff = {k: list(t.reward_buffer) for (k, t) in self.trainers.items()}
         curr_step = {k: int(t.get_step) for (k, t) in self.trainers.items()}
         max_step = {k: int(t.get_max_steps) for (k, t) in self.trainers.items()}
@@ -313,14 +292,6 @@ class TrainerController:
             if not (trainer.threaded or trainer.multiprocess):
                 with hierarchical_timer("trainer_advance"):
                     trainer.advance()
-
-        if self.first_update:
-            active_children = mp.active_children()
-            print(f"ALL ACTIVE CHILDREN: {len(active_children)}")
-            for child in active_children:
-                # print(f"Name: {child.name} | PID: {child.pid} | Exit Code: {child.exitcode}")
-                print(child)
-
         self.first_update = False
         return num_steps
 
@@ -353,18 +324,17 @@ class TrainerController:
         for t in [*self.trainer_threads, *self.trainer_processes]:
             try:
                 t.join(timeout_seconds)
+                self.logger.info(f"Trainer thread/process {t} joined")
             except Exception as e:
                 self.logger.error(f"Trainer thread {t} threw an exception after {timeout_seconds} seconds")
                 self.logger.exception(e)
-            finally:
-                self.logger.debug(f"Trainer thread/process {t} joined")
 
-        self.logger.info("Killing trainers")
-        for t in self.trainer_processes:
-            t.close()
-        self.logger.info("Killing complete.")
+        # self.logger.debug("Closing trainer processes")
+        # for t in self.trainer_processes:
+        #     t.close()
+        # self.logger.debug("Closing of trainer processes complete.")
         if self.stats_queue is not None:
-            self.logger.info("Closing stats queue")
+            self.logger.debug("Closing stats queue")
             self.stats_queue.close()
         with hierarchical_timer("trainer_threads") as main_timer_node:
             for trainer_thread in self.trainer_threads:
@@ -401,6 +371,3 @@ class TrainerController:
             logger.exception(f"An unexpected error occurred in the trainer process.: {ex}")
         finally:
             logger.info("Trainer process closing.")
-            for traj_q in trainer.trajectory_queues:
-                traj_q.close()
-            # del trainer 

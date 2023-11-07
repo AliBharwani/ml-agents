@@ -249,7 +249,6 @@ class SuperTrackTrainer(RLTrainer):
                 raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
         if has_updated:
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
-            # print(f"Update steps: {self.update_steps}")
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
         if self.update_buffer.num_experiences > self.hyperparameters.buffer_size:
@@ -305,12 +304,6 @@ class SuperTrackTrainer(RLTrainer):
         :param name_behavior_id: full identifier of policy
         """
         return self.policy
-        
-    def close_trainer(self):
-        """
-        Sends a shutdown signal to the trainer, which will wait for any current training loop to finish
-        """
-        pass
 
     @staticmethod
     def get_trainer_name() -> str:
