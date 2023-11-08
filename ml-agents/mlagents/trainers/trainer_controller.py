@@ -151,7 +151,7 @@ class TrainerController:
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
-                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer,), daemon=True, name=f"trainer_process")
+                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer, self.logger.getEffectiveLevel()), daemon=True, name=f"trainer_process")
                 stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers), daemon=True, name=f"stats_reporter_process")
                 self.trainer_processes += [trainer_process, stats_reporter_process]
             else:
@@ -238,8 +238,8 @@ class TrainerController:
                 # the exception so we exit the process with an return code of 1.
                 raise ex
         finally:
-            # if self.train_model:
-            #     self._save_models()
+            if self.train_model and not self.multiprocess:
+                self._save_models()
             self.logger.info("Learning was stopped. Main process exiting.")
 
 
@@ -354,8 +354,10 @@ class TrainerController:
                 trainer.advance()
 
     @staticmethod
-    def trainer_process_update_func(trainer: Trainer) -> None:
-        logging_util.set_log_level(logging_util.INFO)
+    def trainer_process_update_func(trainer: Trainer, log_level: int = logging_util.INFO) -> None:
+        # Set log level. On some platforms, the logger isn't common with the
+        # main process, so we need to set it again.
+        logging_util.set_log_level(log_level)
         logger = get_logger(__name__)
         try:
             trainer._initialize()
@@ -370,4 +372,6 @@ class TrainerController:
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the trainer process.: {ex}")
         finally:
+            logger.debug("Saving model")
+            trainer.save_model()
             logger.info("Trainer process closing.")

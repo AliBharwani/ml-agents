@@ -70,7 +70,6 @@ class SuperTrackTrainer(RLTrainer):
             reward_buff_cap,
             StatsReporterOverride=StatsReporterOverride,
         )
-        print(f"SuperTrackTrainer is on thread: {threading.current_thread().name}")
 
         self.seed = seed
         self.policy: TorchPolicy = None  # type: ignore
@@ -94,13 +93,12 @@ class SuperTrackTrainer(RLTrainer):
 
 
     def _initialize(self):
-        # Set log level. On some platforms, the logger isn't common with the
-        # main process, so we need to set it again.
         self.optimizer._init_world_model()
         
         self.model_saver.register(self.policy)
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
+        self._step = self.policy.get_current_step()
         if self.multiprocess:
             logger.info("intializing GPU instance of actor")
             actor_gpu = copy.deepcopy(self.policy.actor)
@@ -230,7 +228,6 @@ class SuperTrackTrainer(RLTrainer):
         while (
             self._step - self.hyperparameters.buffer_init_steps
         ) / self.update_steps > self.steps_per_update:
-            logger.debug(f"Updating SuperTrack policy at step {self._step}")
             buffer = self.update_buffer
             if self._has_enough_data_to_train():
                 world_model_minibatch = buffer.supertrack_sample_mini_batch(self.wm_batch_size,self.wm_window)
