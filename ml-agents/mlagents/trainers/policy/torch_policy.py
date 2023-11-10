@@ -46,10 +46,10 @@ class TorchPolicy(Policy):
             GlobalSteps(device=device)
         )  # could be much simpler if TorchPolicy is nn.Module
 
-        self.stats_name_to_update_name = {
-            "Losses/Value Loss": "value_loss",
-            "Losses/Policy Loss": "policy_loss",
-        }
+        # self.stats_name_to_update_name = {
+        #     "Losses/Value Loss": "value_loss",
+        #     "Losses/Policy Loss": "policy_loss",
+        # }
         self.actor = actor_cls(
             observation_specs=self.behavior_spec.observation_specs,
             network_settings=network_settings,

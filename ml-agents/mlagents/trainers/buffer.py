@@ -9,6 +9,7 @@ import numpy as np
 import h5py
 
 from mlagents_envs.exception import UnityException
+from mlagents_envs.timers import timed
 
 # Elements in the buffer can be np.ndarray, or in the case of teammate obs, actions, rewards,
 # a List of np.ndarray. This is done so that we don't have duplicated np.ndarrays, only references.
@@ -449,6 +450,7 @@ class AgentBuffer(MutableMapping):
             mini_batch[key].set(list(itertools.chain.from_iterable(mb_list)))
         return mini_batch
     
+    @timed
     def supertrack_sample_mini_batch(self, batch_size: int, raw_window_size: int) -> "AgentBuffer":
         """
         Creates a mini-batch with only the supertrack data field

@@ -60,6 +60,8 @@ def set_torch_config(torch_settings: TorchSettings) -> None:
         torch.set_default_device("cuda")  # Set the default device to CUDA (GPU)
     else:
         torch.set_default_device("cpu")  # Set the default device to CPU
+    
+    logger.info(f"Using {_device} for PyTorch")
 
     if torch_settings.anomaly:
         logger.info("Enabling anomaly detection for Torch")

@@ -14,7 +14,6 @@ import torch.multiprocessing as mp
 
 import numpy as np
 from mlagents.trainers import stats
-from mlagents.trainers import agent_processor
 from mlagents.trainers.stats import StatsReporter, StatsReporterCommand, StatsReporterMP, StatsSummary, StatsWriter
 from mlagents_envs import logging_util
 
@@ -31,6 +30,7 @@ from mlagents_envs.timers import (
     timed,
     get_timer_stack_for_thread,
     merge_gauges,
+    write_timing_tree,
 )
 from mlagents.trainers.trainer import Trainer
 from mlagents.trainers.environment_parameter_manager import EnvironmentParameterManager
@@ -359,6 +359,7 @@ class TrainerController:
         # main process, so we need to set it again.
         logging_util.set_log_level(log_level)
         logger = get_logger(__name__)
+        logger.info(f"Trainer process started on pid {os.getpid()} parent pid {os.getppid()}")
         try:
             trainer._initialize()
         except Exception as e:
@@ -372,6 +373,7 @@ class TrainerController:
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the trainer process.: {ex}")
         finally:
+            write_timing_tree(trainer.run_log_path)
             logger.debug("Saving model")
             trainer.save_model()
             logger.info("Trainer process closing.")

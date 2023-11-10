@@ -28,13 +28,17 @@ The decorator and contextmanager are equivalent; the context manager may be more
 over the timer name, or are splitting up multiple sections of a large function.
 """
 
+import json
 import math
+import os
 import sys
 import time
 import threading
 
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Generator, Optional, TypeVar
+
+from mlagents_envs import logging_util
 
 TIMER_FORMAT_VERSION = "0.1.0"
 
@@ -360,3 +364,17 @@ def reset_timers(timer_stack: TimerStack = None) -> None:
     """
     timer_stack = timer_stack or _get_thread_timer()
     timer_stack.reset()
+
+def write_timing_tree(output_dir: str) -> None:
+    timing_path = os.path.join(output_dir, f"timers-{os.getpid()}.json")
+    logger = logging_util.get_logger(__name__)
+    if (os.path.isfile(timing_path)):
+        logger.error(f"The timing file {timing_path} already exists. Overwriting.")
+        return
+    try:
+        with open(timing_path, "w") as f:
+            json.dump(get_timer_tree(), f, indent=4)
+    except FileNotFoundError:
+        logger.warning(
+            f"Unable to save to {timing_path}. Make sure the directory exists"
+        )

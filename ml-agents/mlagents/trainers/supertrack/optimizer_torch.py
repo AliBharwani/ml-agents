@@ -93,6 +93,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         if self.first_update:
             self.check_wm_layernorm("On First Update")
             self.first_update = False
+            # pdb.set_trace()
+            print("WORLD MODEL DEVICE: ", next(self._world_model.parameters()).device)
+            print("POLICY DEVICE: ", next(self.actor_gpu.parameters()).device)
         self.check_wm_layernorm(f"At start of update_world_model")
         window_size = raw_window_size + 1
         if (batch.num_experiences // window_size != batch_size):
@@ -483,7 +486,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         At this moment, torch.onnx.export() doesn't accept None as tensor to be exported,
         so the size of return tuple varies with action spec.
         """
-        print(f"Inputs device: {inputs[0].device}, params device: {next(self.parameters()).device}")
         encoding = self.network_body(inputs[0])
 
         (

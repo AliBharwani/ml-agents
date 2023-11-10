@@ -50,6 +50,7 @@ class SuperTrackTrainer(RLTrainer):
         seed: int,
         artifact_path: str,
         StatsReporterOverride = None,
+        run_log_path = "",
     ):
         """
         Responsible for collecting experiences and training SAC model.
@@ -69,6 +70,7 @@ class SuperTrackTrainer(RLTrainer):
             artifact_path,
             reward_buff_cap,
             StatsReporterOverride=StatsReporterOverride,
+            run_log_path=run_log_path,
         )
 
         self.seed = seed
@@ -91,7 +93,7 @@ class SuperTrackTrainer(RLTrainer):
         self.wm_batch_size = self.trainer_settings.world_model_network_settings.batch_size
         self.policy_batch_size = self.trainer_settings.policy_network_settings.batch_size
 
-
+    @timed
     def _initialize(self):
         self.optimizer._init_world_model()
         
@@ -255,7 +257,7 @@ class SuperTrackTrainer(RLTrainer):
         return has_updated
 
 ### FROM SAC TRAINER LEVEL
-
+    @timed
     def _process_trajectory(self, trajectory: Trajectory) -> None:
         """
         Takes a trajectory and processes it, putting it into the replay buffer.

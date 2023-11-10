@@ -25,6 +25,7 @@ class TrainerFactory:
         param_manager: EnvironmentParameterManager,
         init_path: str = None,
         multi_gpu: bool = False,
+        run_log_path = "",
     ):
         """
         The TrainerFactory generates the Trainers based on the configuration passed as
@@ -52,6 +53,7 @@ class TrainerFactory:
         self.param_manager = param_manager
         self.multi_gpu = multi_gpu
         self.ghost_controller = GhostController()
+        self.run_log_path = run_log_path
 
     def generate(self, behavior_name: str, StatsReporterOverride = None) -> Trainer:
         trainer_settings = self.trainer_config[behavior_name]
@@ -66,6 +68,7 @@ class TrainerFactory:
             self.param_manager,
             self.multi_gpu,
             StatsReporterOverride,
+            self.run_log_path,
         )
 
     @staticmethod
@@ -79,7 +82,8 @@ class TrainerFactory:
         seed: int,
         param_manager: EnvironmentParameterManager,
         multi_gpu: bool = False,
-        StatsReporterOverride = None
+        StatsReporterOverride = None,
+        run_log_path = "",
     ) -> Trainer:
         """
         Initializes a trainer given a provided trainer configuration and brain parameters, as well as
@@ -113,6 +117,7 @@ class TrainerFactory:
                 seed,
                 trainer_artifact_path,
                 StatsReporterOverride=StatsReporterOverride,
+                run_log_path=run_log_path,
             )
 
         except KeyError:

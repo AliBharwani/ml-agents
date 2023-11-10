@@ -28,6 +28,7 @@ class Trainer(abc.ABC):
         artifact_path: str,
         reward_buff_cap: int = 1,
         StatsReporterOverride = None,
+        run_log_path = "",
     ):
         """
         Responsible for collecting experiences and training a neural network model.
@@ -51,6 +52,15 @@ class Trainer(abc.ABC):
         self.artifact_path = artifact_path
         self.summary_freq = self.trainer_settings.summary_freq
         self.policies: Dict[str, Policy] = {}
+        self._run_log_path = run_log_path
+
+
+    @property
+    def run_log_path(self) -> str:
+        """
+        Returns the path to the directory where the summaries will be written.
+        """
+        return self._run_log_path
 
     @property
     def stats_reporter(self):

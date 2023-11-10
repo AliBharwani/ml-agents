@@ -33,6 +33,7 @@ from mlagents_envs.timers import (
     hierarchical_timer,
     get_timer_tree,
     add_metadata as add_timer_metadata,
+    write_timing_tree,
 )
 from mlagents_envs import logging_util
 from mlagents.plugins.stats_writer import register_stats_writer_plugins
@@ -123,6 +124,7 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
             param_manager=env_parameter_manager,
             init_path=checkpoint_settings.maybe_init_path,
             multi_gpu=False,
+            run_log_path=run_logs_dir,
         )
         # Create controller and begin training.
         tc = TrainerController(
@@ -175,17 +177,6 @@ def write_run_options(output_dir: str, run_options: RunOptions) -> None:
 
 def write_training_status(output_dir: str) -> None:
     GlobalTrainingStatus.save_state(os.path.join(output_dir, TRAINING_STATUS_FILE_NAME))
-
-
-def write_timing_tree(output_dir: str) -> None:
-    timing_path = os.path.join(output_dir, "timers.json")
-    try:
-        with open(timing_path, "w") as f:
-            json.dump(get_timer_tree(), f, indent=4)
-    except FileNotFoundError:
-        logger.warning(
-            f"Unable to save to {timing_path}. Make sure the directory exists"
-        )
 
 
 def create_environment_factory(
