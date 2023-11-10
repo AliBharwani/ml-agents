@@ -70,7 +70,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self._world_model.to(default_device())
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self._world_model.train()
-        self.check_wm_layernorm("On init world model")
 
     def set_actor_gpu_to_optimizer(self):
         policy_optimizer_state = self.policy_optimizer.state_dict()
@@ -91,12 +90,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     @timed
     def update_world_model(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
         if self.first_update:
-            self.check_wm_layernorm("On First Update")
             self.first_update = False
-            # pdb.set_trace()
             print("WORLD MODEL DEVICE: ", next(self._world_model.parameters()).device)
             print("POLICY DEVICE: ", next(self.actor_gpu.parameters()).device)
-        self.check_wm_layernorm(f"At start of update_world_model")
         window_size = raw_window_size + 1
         if (batch.num_experiences // window_size != batch_size):
                 raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size}, received {batch.num_experiences}")
@@ -114,10 +110,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         cur_rots = rotations[:, 0, ...].clone().detach()
         cur_vels = vels[:, 0, ...].clone().detach()
         cur_rot_vels = rot_vels[:, 0, ...].clone().detach()
-
-        for tensor, name in [(cur_pos, 'cur_pos'), (cur_rots, 'cur_rots'), (cur_vels, 'cur_vels'), (cur_rot_vels, 'cur_rot_vels')]:
-            if torch.isnan(tensor).any():
-                raise Exception(f"Nan in {name} at start of update_world_model")
 
         loss = 0
         wpos_loss = wvel_loss = wang_loss = wrot_loss = 0
@@ -159,10 +151,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
     @timed
     def char_state_loss(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
-        nans = [torch.isnan(t).any() for t in [pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2]]
-        if any(nans):
-            print("Nan in char_state_loss!")
-            print(nans)
         # We want every loss to give roughly equal contribution
         # to do this, we make sure that, eg, w_pos_loss * pos_loss = total_loss / 4
         # w_pos_loss = total_loss/(pos_loss * 4)
@@ -208,13 +196,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                             kin_rot_t.reshape(batch_size, -1),
                             kin_rvel_t.reshape(batch_size, -1)), dim = -1)
         output = self._world_model(input)
-        if torch.isnan(output).any():
-            print("World model output has nan!")
-            print(f"Input has nan: {torch.isnan(input).any()}")
-            if torch.isnan(input).any():
-                input_parts = [*SupertrackUtils.local(pos, rots, vels, rvels, heights, up_dir), kin_rot_t.reshape(batch_size, -1), kin_rvel_t.reshape(batch_size, -1)]
-                [print(torch.isnan(t).any()) for t in input_parts]
-            pdb.set_trace()
         local_accel, local_rot_accel = SupertrackUtils.split_world_model_output(output)
         # Convert to world space
         root_rot = rots[:, 0:1, :]
@@ -229,20 +210,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # Also that's what the paper does
         vels = vels + accel*self.dtime
         rvels = rvels + rot_accel*self.dtime
-
         pos = pos + vels*self.dtime
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*self.dtime) , rots)
-        avg_quat_norm = torch.mean(torch.norm(rots, p=2, dim=-1))
-        # print(f"Average norm for quaternions: {avg_quat_norm}")
-        # check if quat norm is 0
-        if math.isclose(avg_quat_norm, 0):
-            print("Quat norm is 0!")
-            pdb.set_trace()
-        nans = [torch.isnan(t).any() for t in [pos, rots, vels, rvels]]
-        if any(nans):
-            print("Nan in world model integration!")
-            print(nans)
-        
         return pos, rots, vels, rvels
         
     @timed
@@ -267,7 +236,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
         # It's okay to use pre target vels because we're not predicting velocity targets right now
         pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
-        hn = lambda x : torch.isnan(x).any()
         loss = lpos = lvel = lrot = lang = lreg = lsreg = 0
         cur_actor = self.policy.actor
         if self.split_actor_devices:
@@ -284,10 +252,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             local_sim = SupertrackUtils.local(cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...])
             # Predict PD offsets
             input = torch.cat((*local_kin, *local_sim), dim=-1)
-            if hn(input):
-                print(f"Input has nan! i: {i}")
-                [print(hn(t)) for t in [*local_kin, *local_sim]]
-                pdb.set_trace()
 
             action, runout, _ = cur_actor.get_action_and_stats([input], inputs_already_formatted=True, return_means=True)
             means = runout['means']
@@ -296,13 +260,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             output =  pyt.axis_angle_to_quaternion(output * self.offset_scale)
             # Compute PD targets
             cur_kin_targets = pyt.quaternion_multiply(pre_target_rots[:, i, ...], output)
-            if hn(cur_kin_targets):
-                print(f"cur_kin_targets has nan! i: {i}")
-                if hn(action.continuous_tensor.reshape(batch_size, NUM_T_BONES, 3)):
-                    print("action has nan before being converted to quat")
-                if hn(output):
-                    print("Policy ouptput has nan after being converted to quat")
-                pdb.set_trace()
             # Pass through world model
             cur_spos, cur_srots, cur_svels, cur_srvels = self._integrate_through_world_model(
                                                                 cur_spos,
@@ -366,7 +323,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # copy policy to cpu 
         if self.split_actor_devices:
             self.policy.actor.load_state_dict(self.actor_gpu.state_dict())
-            # self.policy.actor.to("cpu")
         return update_stats
 
 

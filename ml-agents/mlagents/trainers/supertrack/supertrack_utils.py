@@ -127,7 +127,6 @@ class SupertrackUtils:
         
     @staticmethod
     def process_raw_observations_to_policy_input(st_data : List[SuperTrackDataField]) -> torch.Tensor:
-        # 
         """
         Take inputs directly from Unity and transform them into a form that can be used as input to the policy.
         """

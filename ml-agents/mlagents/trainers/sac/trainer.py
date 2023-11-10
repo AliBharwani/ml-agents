@@ -87,7 +87,6 @@ class SACTrainer(OffPolicyTrainer):
         """
         Takes a trajectory and processes it, putting it into the replay buffer.
         """
-        self.optimizer.check_wm_layernorm(f"Processing trajectory!")
         super()._process_trajectory(trajectory)
         last_step = trajectory.steps[-1]
         agent_id = trajectory.agent_id  # All the agents should have the same ID

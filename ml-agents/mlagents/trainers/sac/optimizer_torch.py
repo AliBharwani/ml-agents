@@ -236,25 +236,9 @@ class TorchSACOptimizer(TorchOptimizer):
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=hyperparameters.learning_rate)
         self._world_model.train()
         self._move_to_device(default_device())
-        self.check_wm_layernorm("After init")
         print(f"Initializing SAC Optimzer on thread: {threading.current_thread().name}")
         self.first_update = True
 
-    def check_wm_layernorm(self, print_on_true : str = None):
-        encoder_found = False
-        for layer in self._world_model.layers:
-            if isinstance(layer, nn.LayerNorm):
-                encoder_found = True
-                if torch.allclose(layer.weight, torch.zeros_like(layer.weight)):
-                    print("Layer norm weight is 0!")
-                    if print_on_true is not None:
-                        print(print_on_true)
-                        # pdb.set_trace()
-        if not encoder_found:
-            print("No layer norm found!")
-            if print_on_true is not None:
-                print(print_on_true)
-                # pdb.set_trace() 
     @property
     def critic(self):
         return self._critic
@@ -518,11 +502,9 @@ class TorchSACOptimizer(TorchOptimizer):
         """
         if self.first_update:
             print(f"Updating on thread: {threading.current_thread().name}")
-            self.check_wm_layernorm("Before first update")
             
             print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
             self.first_update = False
-        self.check_wm_layernorm("During Update")
 
         rewards = {}
         for name in self.reward_signals:
