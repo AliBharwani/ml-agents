@@ -22,7 +22,7 @@ from mlagents.trainers.torch_entities.networks import Actor, NetworkBody
 from mlagents.trainers.torch_entities.utils import ModelUtils
 from mlagents_envs.base_env import ActionSpec, ObservationSpec
 
-from mlagents_envs.timers import timed
+from mlagents_envs.timers import hierarchical_timer, timed
 from mlagents.trainers.policy.torch_policy import TorchPolicy
 from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
 from mlagents.trainers.settings import (
@@ -220,20 +220,24 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         if (batch.num_experiences // window_size != batch_size):
                 raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size} = {window_size*batch_size}, received {batch.num_experiences}, diff: {batch.num_experiences - window_size*batch_size}")
 
-        # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
-        st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
-        sim_char_tensors = [st_datum.sim_char_state.as_tensors for st_datum in st_data]
-        kin_char_tensors = [st_datum.kin_char_state.as_tensors for st_datum in st_data]
+        with hierarchical_timer("gen tensors"):
+            # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
+            st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
+            sim_char_tensors = [st_datum.sim_char_state.as_tensors for st_datum in st_data]
+            kin_char_tensors = [st_datum.kin_char_state.as_tensors for st_datum in st_data]
+            kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
 
-        s_pos, s_rots, s_vels, s_rvels, s_h, s_up = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
-        k_pos, k_rots, k_vels, k_rvels, k_h, k_up = self._convert_to_usable_tensors(kin_char_tensors, batch_size, window_size)
+        with hierarchical_timer("_convert_to_usable_tensors"):
+            s_pos, s_rots, s_vels, s_rvels, s_h, s_up = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
+            k_pos, k_rots, k_vels, k_rvels, k_h, k_up = self._convert_to_usable_tensors(kin_char_tensors, batch_size, window_size)
 
-        cur_spos = s_pos[:, 0, ...].clone().detach()
-        cur_srots = s_rots[:, 0, ...].clone().detach()
-        cur_svels = s_vels[:, 0, ...].clone().detach()
-        cur_srvels = s_rvels[:, 0, ...].clone().detach()
+        with hierarchical_timer("clone / detach"):
+            cur_spos = s_pos[:, 0, ...].clone().detach()
+            cur_srots = s_rots[:, 0, ...].clone().detach()
+            cur_svels = s_vels[:, 0, ...].clone().detach()
+            cur_srvels = s_rvels[:, 0, ...].clone().detach()
 
-        kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
+        # kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
         # It's okay to use pre target vels because we're not predicting velocity targets right now
         pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
         loss = lpos = lvel = lrot = lang = lreg = lsreg = 0
@@ -242,68 +246,71 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             cur_actor = self.actor_gpu
         cur_actor.train()
         self._world_model.eval()
-        for param in self._world_model.parameters():
-            param.requires_grad = False
+        
+        with hierarchical_timer("set grads on world model"):
+            for param in self._world_model.parameters():
+                param.requires_grad = False
         for i in range(raw_window_size):
-            local_kin = SupertrackUtils.local(k_pos[:, i, ...], k_rots[:, i, ...], k_vels[:, i, ...], k_rvels[:, i, ...], k_h[:, i, ...], k_up[:, i, ...])
-            # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
-            cur_spos[:, 0, :] = s_pos[:, i, 0, :].clone().detach()
-            cur_srots[:, 0, :] = s_rots[:, i , 0, :].clone().detach()
-            local_sim = SupertrackUtils.local(cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...])
-            # Predict PD offsets
-            input = torch.cat((*local_kin, *local_sim), dim=-1)
+            with hierarchical_timer("update one window step"):
+                local_kin = SupertrackUtils.local(k_pos[:, i, ...], k_rots[:, i, ...], k_vels[:, i, ...], k_rvels[:, i, ...], k_h[:, i, ...], k_up[:, i, ...])
+                # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
+                cur_spos[:, 0, :] = s_pos[:, i, 0, :].clone().detach()
+                cur_srots[:, 0, :] = s_rots[:, i , 0, :].clone().detach()
+                local_sim = SupertrackUtils.local(cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...])
+                # Predict PD offsets
+                input = torch.cat((*local_kin, *local_sim), dim=-1)
 
-            action, runout, _ = cur_actor.get_action_and_stats([input], inputs_already_formatted=True, return_means=True)
-            means = runout['means']
-            output = action.continuous_tensor.reshape(batch_size, NUM_T_BONES, 3)
-            # output = SupertrackUtils.convert_actions_to_quat(output, self.offset_scale)
-            output =  pyt.axis_angle_to_quaternion(output * self.offset_scale)
-            # Compute PD targets
-            cur_kin_targets = pyt.quaternion_multiply(pre_target_rots[:, i, ...], output)
-            # Pass through world model
-            cur_spos, cur_srots, cur_svels, cur_srvels = self._integrate_through_world_model(
-                                                                cur_spos,
-                                                                cur_srots,
-                                                                cur_svels,
-                                                                cur_srvels,
-                                                                s_h[:, i, ...],
-                                                                s_up[:, i, ...],
-                                                                pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
-                                                                pre_target_vels[:, i, ...])
-            # Compute losses
-            """
-            The difference between this prediction [of simulated state] and the target
-            kinematic states K is then computed in the local space, and the
-            losses used to update the weights of the policy
-            """
-            sim_state = [cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...]] 
-            local_spos, local_srots, local_svels, local_srvels, _, _ = SupertrackUtils.local(*[t.clone() for t  in sim_state], rots_as_twoaxis=False, unzip_to_batchsize=False)
-            # local_spos, local_srots, local_svels, local_srvels, _, _ = SupertrackUtils.local(cur_spos.clone, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...], rots_as_twoaxis=False, unzip_to_batchsize=False)
-            next_frame_kin = [k_pos[:, i+1, ...], k_rots[:, i+1, ...], k_vels[:, i+1, ...], k_rvels[:, i+1, ...], k_h[:, i+1, ...], k_up[:, i+1, ...]]
-            local_kpos, local_krots, local_kvels, local_krvels, _, _ = SupertrackUtils.local(*[t.clone().detach() for t in next_frame_kin], rots_as_twoaxis=False, unzip_to_batchsize=False)
+                action, runout, _ = cur_actor.get_action_and_stats([input], inputs_already_formatted=True, return_means=True)
+                means = runout['means']
+                output = action.continuous_tensor.reshape(batch_size, NUM_T_BONES, 3)
+                # output = SupertrackUtils.convert_actions_to_quat(output, self.offset_scale)
+                output =  pyt.axis_angle_to_quaternion(output * self.offset_scale)
+                # Compute PD targets
+                cur_kin_targets = pyt.quaternion_multiply(pre_target_rots[:, i, ...], output)
+                # Pass through world model
+                cur_spos, cur_srots, cur_svels, cur_srvels = self._integrate_through_world_model(
+                                                                    cur_spos,
+                                                                    cur_srots,
+                                                                    cur_svels,
+                                                                    cur_srvels,
+                                                                    s_h[:, i, ...],
+                                                                    s_up[:, i, ...],
+                                                                    pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
+                                                                    pre_target_vels[:, i, ...])
+                # Compute losses
+                """
+                The difference between this prediction [of simulated state] and the target
+                kinematic states K is then computed in the local space, and the
+                losses used to update the weights of the policy
+                """
+                sim_state = [cur_spos, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...]] 
+                local_spos, local_srots, local_svels, local_srvels, _, _ = SupertrackUtils.local(*[t.clone() for t  in sim_state], rots_as_twoaxis=False, unzip_to_batchsize=False)
+                # local_spos, local_srots, local_svels, local_srvels, _, _ = SupertrackUtils.local(cur_spos.clone, cur_srots, cur_svels, cur_srvels, s_h[:, i, ...], s_up[:, i, ...], rots_as_twoaxis=False, unzip_to_batchsize=False)
+                next_frame_kin = [k_pos[:, i+1, ...], k_rots[:, i+1, ...], k_vels[:, i+1, ...], k_rvels[:, i+1, ...], k_h[:, i+1, ...], k_up[:, i+1, ...]]
+                local_kpos, local_krots, local_kvels, local_krvels, _, _ = SupertrackUtils.local(*[t.clone().detach() for t in next_frame_kin], rots_as_twoaxis=False, unzip_to_batchsize=False)
 
-            step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(local_spos, 
-                                                                            local_kpos,
-                                                                            local_srots,
-                                                                            local_krots,
-                                                                            local_svels, 
-                                                                            local_kvels, 
-                                                                            local_srvels, 
-                                                                            local_krvels)
-            loss += step_loss
-            lpos += raw_losses[0]
-            lvel += raw_losses[1]
-            lang += raw_losses[2]
-            lrot += raw_losses[3]
-            # Compute regularization losses
-            step_lreg = torch.norm(means, p=2 ,dim=-1).mean()
-            step_lsreg = torch.norm(means, p=1 ,dim=-1).mean()
-            # Weigh regularization losses to contribute 1/100th of the other losses
-            step_lreg /= 100
-            step_lsreg /= 100
-            lreg += step_lreg
-            lsreg += step_lsreg
-            loss += step_lreg + step_lsreg
+                step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(local_spos, 
+                                                                                local_kpos,
+                                                                                local_srots,
+                                                                                local_krots,
+                                                                                local_svels, 
+                                                                                local_kvels, 
+                                                                                local_srvels, 
+                                                                                local_krvels)
+                loss += step_loss
+                lpos += raw_losses[0]
+                lvel += raw_losses[1]
+                lang += raw_losses[2]
+                lrot += raw_losses[3]
+                # Compute regularization losses
+                step_lreg = torch.norm(means, p=2 ,dim=-1).mean()
+                step_lsreg = torch.norm(means, p=1 ,dim=-1).mean()
+                # Weigh regularization losses to contribute 1/100th of the other losses
+                step_lreg /= 100
+                step_lsreg /= 100
+                lreg += step_lreg
+                lsreg += step_lsreg
+                loss += step_lreg + step_lsreg
             
         update_stats = {"Policy/Loss": loss.item(),
                         "Policy/pos_loss": lpos.item(),
@@ -313,16 +320,18 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                         "Policy/reg_loss": lreg.item(),
                         "Policy/sreg_loss": lsreg.item(),
                         "Policy/learning_rate": self.policy_lr}
-        self.policy_optimizer.zero_grad()
-        loss.backward()
-        self.policy_optimizer.step()
+        with hierarchical_timer("policy optimizer step"):
+            self.policy_optimizer.zero_grad()
+            loss.backward()
+            self.policy_optimizer.step()
         self._world_model.train()
         for param in self._world_model.parameters():
             param.requires_grad = True
 
         # copy policy to cpu 
-        if self.split_actor_devices:
-            self.policy.actor.load_state_dict(self.actor_gpu.state_dict())
+        with hierarchical_timer("copy policy to cpu"):
+            if self.split_actor_devices:
+                self.policy.actor.load_state_dict(self.actor_gpu.state_dict())
         return update_stats
 
 
@@ -460,6 +469,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         ]
         return tuple(export_out)
 
+    @timed
     def get_action_and_stats(
         self,
         inputs: List[Union[torch.Tensor, np.ndarray]],
@@ -496,10 +506,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
         encoding = self.network_body(policy_input)
         action, log_probs, entropies, means = self.action_model(encoding, None) 
-        hn = lambda x: torch.isnan(x).any()
-        if hn(policy_input) or hn(encoding) or hn(action.continuous_tensor):
-            print(f"Policy_input nan: {hn(policy_input)}, encoding nan: {hn(encoding)}, action nan: {hn(action.continuous_tensor)}")
-            pdb.set_trace()
         run_out = {}
         # This is the clipped action which is not saved to the buffer
         # but is exclusively sent to the environment.

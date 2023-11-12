@@ -21,7 +21,7 @@ import numpy as np
 from mlagents.trainers.policy.checkpoint_manager import ModelCheckpoint
 
 from mlagents_envs.logging_util import get_logger
-from mlagents_envs.timers import timed
+from mlagents_envs.timers import hierarchical_timer, timed
 from mlagents.trainers.policy import Policy
 from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
 from mlagents.trainers.trainer.rl_trainer import RLTrainer
@@ -250,10 +250,11 @@ class SuperTrackTrainer(RLTrainer):
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
-        if self.update_buffer.num_experiences > self.hyperparameters.buffer_size:
-            self.update_buffer.truncate_on_traj_end(
-                int(self.hyperparameters.buffer_size * BUFFER_TRUNCATE_PERCENT)
-            )
+        with hierarchical_timer("update_buffer.truncate"):
+            if self.update_buffer.num_experiences > self.hyperparameters.buffer_size * 1.5:
+                self.update_buffer.truncate_on_traj_end(
+                    int(self.hyperparameters.buffer_size * BUFFER_TRUNCATE_PERCENT)
+                )
         return has_updated
 
 ### FROM SAC TRAINER LEVEL

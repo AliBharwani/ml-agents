@@ -15,7 +15,7 @@ import pytorch3d.transforms as pyt
 import numpy as np
 from mlagents.trainers.torch_entities.utils import ModelUtils
 
-from mlagents_envs.timers import timed
+from mlagents_envs.timers import hierarchical_timer, timed
 
 TOTAL_OBS_LEN = 720
 CHAR_STATE_LEN = 259
@@ -69,12 +69,18 @@ class CharState():
         return self.positions, self.rotations, self.velocities, self.rot_velocities, self.heights, self.up_dir
     
     def to_numpy(self):
-        self.positions = ModelUtils.to_numpy(self.positions)
-        self.rotations = ModelUtils.to_numpy(self.rotations)
-        self.velocities = ModelUtils.to_numpy(self.velocities)
-        self.rot_velocities = ModelUtils.to_numpy(self.rot_velocities)
-        self.heights = ModelUtils.to_numpy(self.heights)
-        self.up_dir = ModelUtils.to_numpy(self.up_dir)
+        for attr in ['positions', 'rotations', 'velocities', 'rot_velocities', 'heights', 'up_dir']:
+            current_attr = getattr(self, attr)
+            if not isinstance(current_attr, np.ndarray):
+                setattr(self, attr, ModelUtils.to_numpy(current_attr))
+        # if isinstance(self.positions, np.ndarray):
+        #     return
+        # self.positions = ModelUtils.to_numpy(self.positions)
+        # self.rotations = ModelUtils.to_numpy(self.rotations)
+        # self.velocities = ModelUtils.to_numpy(self.velocities)
+        # self.rot_velocities = ModelUtils.to_numpy(self.rot_velocities)
+        # self.heights = ModelUtils.to_numpy(self.heights)
+        # self.up_dir = ModelUtils.to_numpy(self.up_dir)
 
     
 @dataclass
@@ -93,8 +99,10 @@ class PDTargets():
         return self.rotations, self.rot_velocities
     
     def to_numpy(self):
-        self.rotations = ModelUtils.to_numpy(self.rotations)
-        self.rot_velocities = ModelUtils.to_numpy(self.rot_velocities)
+        for attr in ['rotations', 'rot_velocities']:
+            current_attr = getattr(self, attr)
+            if not isinstance(current_attr, np.ndarray):
+                setattr(self, attr, ModelUtils.to_numpy(current_attr))
 
 
 @dataclass
@@ -251,10 +259,10 @@ class SupertrackUtils:
     
 
     @staticmethod
-    def parse_supertrack_data_field_batched(inputs: torch.tensor) -> List[SuperTrackDataField]:
+    def parse_supertrack_data_field_batched(inputs: Union[torch.tensor, np.ndarray]) -> List[SuperTrackDataField]:
         if len(inputs.shape) != 2:
             raise Exception(f"SupertrackUtils.parse_supertrack_data_field_batched expected inputs to be of len 2 (batch_dim, data), got {len(inputs)}")
-        use_tensor = True # torch.is_tensor(inputs) 
+        use_tensor = torch.is_tensor(inputs)  # torch.is_tensor(inputs) 
         B = inputs.shape[0]
         idx = 0
         sim_char_state, idx = SupertrackUtils.extract_char_state_batched(inputs, idx, use_tensor)
@@ -352,17 +360,24 @@ class SupertrackUtils:
             unzip_to_batchsize: bool = True,
             ): 
         B = cur_pos.shape[0] # batch_size
-        root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
-        inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
-        local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
-        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_t_bones, 4]
-        if rots_as_twoaxis:
-            return_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
-        else:
-            return_rots = local_rots
+        with hierarchical_timer("root_pos"):
+            root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
+        with hierarchical_timer("inv_root_rots"):
+            inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
+        with hierarchical_timer("local_pos"):
+            local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
+        with hierarchical_timer("local_rots"):
+            local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_t_bones, 4]
+        with hierarchical_timer("rots_as_twoaxis"):
+            if rots_as_twoaxis:
+                return_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
+            else:
+                return_rots = local_rots
         # two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
-        local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
-        local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
+        with hierarchical_timer("local_vels"):
+            local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
+        with hierarchical_timer("local_rot_vels"):
+            local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
 
         return_tensors = [local_pos, return_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
