@@ -8,6 +8,7 @@ import threading
 from typing import Dict, cast
 import os
 
+
 from mlagents.trainers.buffer import BufferKey
 from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils
 from mlagents.trainers.trajectory import Trajectory
@@ -21,6 +22,7 @@ import numpy as np
 from mlagents.trainers.policy.checkpoint_manager import ModelCheckpoint
 
 from mlagents_envs.logging_util import get_logger
+from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 from mlagents_envs.timers import hierarchical_timer, timed
 from mlagents.trainers.policy import Policy
 from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
@@ -28,7 +30,8 @@ from mlagents.trainers.trainer.rl_trainer import RLTrainer
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
 from mlagents.trainers.settings import TrainerSettings
 from mlagents.trainers.supertrack.optimizer_torch import SuperTrackPolicyNetwork, TorchSuperTrackOptimizer, SuperTrackSettings
-
+from torch.profiler import profile, record_function, ProfilerActivity
+from mlagents.torch_utils import torch, default_device
 
 logger = get_logger(__name__)
 
@@ -101,6 +104,7 @@ class SuperTrackTrainer(RLTrainer):
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
         self._step = self.policy.get_current_step()
+        # MY TODO: MAKE SURE SUPER TRACK WORKS W CPU TRAINING
         if self.multiprocess:
             logger.info("intializing GPU instance of actor")
             actor_gpu = copy.deepcopy(self.policy.actor)
@@ -227,6 +231,10 @@ class SuperTrackTrainer(RLTrainer):
         """
         has_updated = False
         batch_update_stats: Dict[str, list] = defaultdict(list)
+        def trace_handler(prof: profile):
+            print(f"Update step: {self.update_steps}:\n", prof.key_averages().table(row_limit=-1))
+        # prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1), profile_memory=True, on_trace_ready=trace_handler)
+        # prof.start()
         while (
             self._step - self.hyperparameters.buffer_init_steps
         ) / self.update_steps > self.steps_per_update:
@@ -246,6 +254,8 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
             else:
                 raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
+        #     prof.step()
+        # prof.stop()
         if has_updated:
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
@@ -266,7 +276,8 @@ class SuperTrackTrainer(RLTrainer):
         super()._process_trajectory(trajectory)
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
         if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
-            SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory)
+            self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
+            SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory, device=default_device())
         self._append_to_update_buffer(agent_buffer_trajectory)
 
     def create_optimizer(self) -> TorchOptimizer:

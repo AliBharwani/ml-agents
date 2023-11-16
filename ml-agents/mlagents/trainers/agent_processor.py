@@ -298,7 +298,7 @@ class AgentProcessor:
                 self._episode_steps[global_agent_id] += 1
 
             # Add a trajectory segment to the buffer if terminal or the length has reached the time horizon
-            has_reached_trajectory_len = not self._process_trajectory_on_termination and len(self._experience_buffers[global_agent_id]) >= self._max_trajectory_length
+            has_reached_trajectory_len = (not self._process_trajectory_on_termination) and len(self._experience_buffers[global_agent_id]) >= self._max_trajectory_length
             if (has_reached_trajectory_len or terminated):
                 next_obs = step.obs
                 next_group_obs = []
@@ -313,6 +313,7 @@ class AgentProcessor:
                     next_group_obs=next_group_obs,
                     behavior_id=self._behavior_id,
                 )
+                
                 for traj_queue in self._trajectory_queues:
                     traj_queue.put(trajectory)
                 self._experience_buffers[global_agent_id] = []
@@ -454,7 +455,8 @@ class AgentManagerQueue(Generic[T]):
             print(f"failed to put item in queue: {e}")
 
     def close(self):
-        self._queue.close()
+        if self.use_pytorch_mp:
+            self._queue.close()
     
     def join_thread(self):
         self._queue.join_thread()

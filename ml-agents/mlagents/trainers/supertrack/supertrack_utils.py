@@ -152,13 +152,15 @@ class SupertrackUtils:
 
     @staticmethod
     def extract_char_state(obs: Union[torch.tensor, np.ndarray], # obs is of shape [batch_size, TOTAL_OBS_LEN]
-                            idx: int, use_tensor: bool) -> (CharState, int):
+                            idx: int, use_tensor: bool, pin_memory: bool = False, device = None) -> (CharState, int):
         if use_tensor:
-            positions: torch.Tensor = torch.zeros((NUM_BONES, 3), device=obs.device)
-            rotations: torch.Tensor = torch.zeros((NUM_BONES, 4), device=obs.device)
-            velocities: torch.Tensor = torch.zeros((NUM_BONES, 3), device=obs.device)
-            rot_velocities: torch.Tensor = torch.zeros((NUM_BONES, 3), device=obs.device)
-            heights: torch.Tensor = torch.zeros(NUM_BONES, device=obs.device)
+            if device is None:
+                device = obs.device
+            positions: torch.Tensor = torch.zeros((NUM_BONES, 3), device=device, pin_memory=pin_memory)
+            rotations: torch.Tensor = torch.zeros((NUM_BONES, 4), device=device, pin_memory=pin_memory)
+            velocities: torch.Tensor = torch.zeros((NUM_BONES, 3), device=device, pin_memory=pin_memory)
+            rot_velocities: torch.Tensor = torch.zeros((NUM_BONES, 3), device=device, pin_memory=pin_memory)
+            heights: torch.Tensor = torch.zeros(NUM_BONES, device=device, pin_memory=pin_memory)
         else:
             positions: np.ndarray = np.zeros((NUM_BONES, 3))
             rotations: np.ndarray = np.zeros((NUM_BONES, 4))
@@ -188,14 +190,16 @@ class SupertrackUtils:
 
     @staticmethod
     def extract_char_state_batched(obs: Union[torch.tensor, np.ndarray], # obs is of shape [batch_size, TOTAL_OBS_LEN]
-                            idx: int, use_tensor: bool) -> (CharState, int):
+                            idx: int, use_tensor: bool, device = None) -> (CharState, int):
         B = obs.shape[0]
         if use_tensor:
-            positions: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=obs.device)
-            rotations: torch.Tensor = torch.zeros((B, NUM_BONES, 4), device=obs.device)
-            velocities: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=obs.device)
-            rot_velocities: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=obs.device)
-            heights: torch.Tensor = torch.zeros(B, NUM_BONES, device=obs.device)
+            if device is None:
+                device = obs.device
+            positions: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=device)
+            rotations: torch.Tensor = torch.zeros((B, NUM_BONES, 4), device=device)
+            velocities: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=device)
+            rot_velocities: torch.Tensor = torch.zeros((B, NUM_BONES, 3), device=device)
+            heights: torch.Tensor = torch.zeros(B, NUM_BONES, device=device)
         else:
             positions: np.ndarray = np.zeros((B, NUM_BONES, 3))
             rotations: np.ndarray = np.zeros((B, NUM_BONES, 4))
@@ -224,12 +228,14 @@ class SupertrackUtils:
                         up_dir[i]) for i in range(B)], idx 
     
     @staticmethod
-    def extract_pd_targets_batched(obs: Union[torch.tensor, np.ndarray], idx, use_tensor : bool) -> (PDTargets, int):
+    def extract_pd_targets_batched(obs: Union[torch.tensor, np.ndarray], idx, use_tensor : bool, device = None) -> (PDTargets, int):
         # obs is of shape [batch_size, TOTAL_OBS_LEN]
         B = obs.shape[0]
         if use_tensor:
-            rotations = torch.zeros((B, NUM_BONES, 4), device=obs.device)
-            rot_velocities = torch.zeros((B, NUM_BONES, 3), device=obs.device)
+            if device is None:
+                device = obs.device
+            rotations = torch.zeros((B, NUM_BONES, 4), device=device)
+            rot_velocities = torch.zeros((B, NUM_BONES, 3), device=device)
         else:
             rotations = np.zeros((B, NUM_BONES, 4))
             rot_velocities = np.zeros((B, NUM_BONES, 3))
@@ -242,10 +248,12 @@ class SupertrackUtils:
         return [PDTargets(rotations[i], rot_velocities[i]) for i in range(B)], idx 
 
     @staticmethod
-    def extract_pd_targets(obs: Union[torch.tensor, np.ndarray], idx, use_tensor : bool) -> (PDTargets, int):
+    def extract_pd_targets(obs: Union[torch.tensor, np.ndarray], idx, use_tensor : bool, pin_memory: bool = False, device = None) -> (PDTargets, int):
         if use_tensor:
-            rotations = torch.zeros((NUM_BONES, 4), device=obs.device)
-            rot_velocities = torch.zeros((NUM_BONES, 3), device=obs.device)
+            if device is None:
+                device = obs.device
+            rotations = torch.zeros((NUM_BONES, 4), device=device, pin_memory=pin_memory)
+            rot_velocities = torch.zeros((NUM_BONES, 3), device=device, pin_memory=pin_memory)
         else:
             rotations = np.zeros((NUM_BONES, 4))
             rot_velocities = np.zeros((NUM_BONES, 3))
@@ -281,19 +289,19 @@ class SupertrackUtils:
                 post_targets=post_targets[i]) for i in range(B)]
     
     @staticmethod
-    def parse_supertrack_data_field(inputs: List[Union[torch.tensor, np.ndarray]]) -> AgentBuffer:
+    def parse_supertrack_data_field(inputs: List[Union[torch.tensor, np.ndarray]], pin_memory: bool = False, device = None) -> AgentBuffer:
         if len(inputs) != 1:
             raise Exception(f"SupertrackUtils.parse_supertrack_data_field expected inputs to be of len 1 (data), got {len(inputs)}")
         use_tensor = torch.is_tensor(inputs) 
         obs = inputs[0]
         idx = 0
-        sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor)
+        sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         # Extract kin char state
-        kin_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor)
+        kin_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         # Extract pre_targets
-        pre_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor)
+        pre_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         # Extract post_targets
-        post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor)
+        post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         if idx != TOTAL_OBS_LEN:
             raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
         return SuperTrackDataField(
@@ -304,15 +312,21 @@ class SupertrackUtils:
     
 
     @staticmethod
-    def add_supertrack_data_field_OLD(agent_buffer_trajectory: AgentBuffer) -> AgentBuffer:
+    def add_supertrack_data_field_OLD(agent_buffer_trajectory: AgentBuffer, pin_memory: bool = False, device = None) -> AgentBuffer:
         supertrack_data = AgentBufferField()
+        # s_pos = 
         for i in range(agent_buffer_trajectory.num_experiences):
             obs = agent_buffer_trajectory[(ObservationKeyPrefix.OBSERVATION, 0)][i]
             if (len(obs) != TOTAL_OBS_LEN):
                 raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
             # print(f"Obs at idx {agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ][i]} : {obs}")
-            supertrack_data.append(SupertrackUtils.parse_supertrack_data_field([obs]))
+            st_datum = SupertrackUtils.parse_supertrack_data_field([obs], pin_memory=pin_memory, device=device)
+            supertrack_data.append(st_datum)
+
         agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA] = supertrack_data
+
+        agent_buffer_trajectory['s_pos'] 
+
     
     @staticmethod
     def split_world_model_output(x: torch.Tensor) -> (torch.Tensor, torch.Tensor):

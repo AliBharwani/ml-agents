@@ -158,10 +158,10 @@ class Trajectory(NamedTuple):
             raise Exception("Attempting to add trajectory with more than one observation to SuperTrack buffer", len(obs), obs)
         for step, exp in enumerate(self.steps):
             agent_buffer_trajectory[ObsUtil.get_name_at(0)].append(exp.obs[0])
-            agent_buffer_trajectory[BufferKey.DONE].append(exp.done)
-            agent_buffer_trajectory[BufferKey.CONTINUOUS_ACTION].append(
-                exp.action.continuous
-            )
+            # agent_buffer_trajectory[BufferKey.DONE].append(exp.done)
+            # agent_buffer_trajectory[BufferKey.CONTINUOUS_ACTION].append(
+            #     exp.action.continuous
+            # )
             agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA].append(exp.supertrack_data)
             agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ].append(step)
             agent_buffer_trajectory[BufferKey.TRAJ_LEN].append(

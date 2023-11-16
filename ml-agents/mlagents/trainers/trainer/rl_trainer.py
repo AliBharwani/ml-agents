@@ -28,6 +28,7 @@ from mlagents.trainers.trajectory import Trajectory
 from mlagents.trainers.settings import TrainerSettings
 from mlagents.trainers.stats import StatsPropertyType
 from mlagents.trainers.model_saver.model_saver import BaseModelSaver
+from torch.profiler import profile, record_function, ProfilerActivity
 
 
 logger = get_logger(__name__)
@@ -61,7 +62,8 @@ class RLTrainer(Trainer):
             self.trainer_settings, self.artifact_path, self.load
         )
         self._has_warned_group_rewards = False
-    
+        self.last_profile_step = -1
+
     def end_episode(self) -> None:
         """
         A signal that the Episode has ended. The buffer must be reset.

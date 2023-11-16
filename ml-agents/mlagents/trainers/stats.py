@@ -208,6 +208,10 @@ class ConsoleWriter(StatsWriter):
         # else:
         #     log_info.append("No episode was completed since last summary")
         #     log_info.append(is_training)
+        for key in values.keys():
+            if key.startswith("Supertrack"):
+                log_info.append(f"{key}: {values[key].sum}")
+
         logger.info(". ".join(log_info) + ".")
 
     def add_property(

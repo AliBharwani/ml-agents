@@ -471,7 +471,7 @@ class AgentBuffer(MutableMapping):
             if num_steps_remaning < window_size:
                 num_steps_to_rewind = window_size - num_steps_remaning
                 if num_steps_to_rewind > self[BufferKey.IDX_IN_TRAJ][i]:
-                    raise Exception(f"Not enough data to rewind - make sure min trajectory length is at least {window_size}")
+                    raise Exception(f"Not enough data to rewind. Traj found with length {self[BufferKey.TRAJ_LEN][i]} - make sure min trajectory length is at least {window_size}")
                 i -= num_steps_to_rewind
             mini_batch[BufferKey.SUPERTRACK_DATA].extend(self[BufferKey.SUPERTRACK_DATA][i : i + window_size])
             mini_batch[BufferKey.IDX_IN_TRAJ].extend(self[BufferKey.IDX_IN_TRAJ][i : i + window_size])

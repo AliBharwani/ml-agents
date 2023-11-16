@@ -134,6 +134,7 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
             env_parameter_manager,
             not checkpoint_settings.inference,
             run_seed,
+            options.torch_settings,
         )
 
     # Begin training

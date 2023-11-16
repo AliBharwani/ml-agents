@@ -14,6 +14,7 @@ import torch.multiprocessing as mp
 
 import numpy as np
 from mlagents.trainers import stats
+from mlagents.trainers.settings import TorchSettings
 from mlagents.trainers.stats import StatsReporter, StatsReporterCommand, StatsReporterMP, StatsSummary, StatsWriter
 from mlagents_envs import logging_util
 
@@ -39,6 +40,7 @@ from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
 from mlagents.trainers.agent_processor import AgentManager, AgentManagerQueue
 from mlagents import torch_utils
 from mlagents.torch_utils.globals import get_rank
+from torch.profiler import profile, record_function, ProfilerActivity
 
 
 
@@ -51,6 +53,7 @@ class TrainerController:
         param_manager: EnvironmentParameterManager,
         train: bool,
         training_seed: int,
+        torch_settings: TorchSettings,
     ):
         """
         :param output_path: Path to save the model.
@@ -82,6 +85,7 @@ class TrainerController:
         self.first_update = True
         self.multiprocess = False
         self.stats_queue = None
+        self.torch_settings = torch_settings
 
     @timed
     def _save_models(self):
@@ -151,8 +155,8 @@ class TrainerController:
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
-                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer, self.logger.getEffectiveLevel()), daemon=True, name=f"trainer_process")
-                stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers), daemon=True, name=f"stats_reporter_process")
+                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer, self.torch_settings, self.logger.getEffectiveLevel()), daemon=True, name=f"trainer_process")
+                stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers,), daemon=True, name=f"stats_reporter_process")
                 self.trainer_processes += [trainer_process, stats_reporter_process]
             else:
                 print(f"Running trainer on same thread & process as env manager")
@@ -354,25 +358,35 @@ class TrainerController:
                 trainer.advance()
 
     @staticmethod
-    def trainer_process_update_func(trainer: Trainer, log_level: int = logging_util.INFO) -> None:
+    def trainer_process_update_func(trainer: Trainer, torch_settings: TorchSettings,  log_level: int = logging_util.INFO) -> None:
         # Set log level. On some platforms, the logger isn't common with the
         # main process, so we need to set it again.
         logging_util.set_log_level(log_level)
         logger = get_logger(__name__)
+        torch_utils.set_torch_config(torch_settings)
         logger.info(f"Trainer process started on pid {os.getpid()} parent pid {os.getppid()}")
         try:
             trainer._initialize()
         except Exception as e:
             print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
         try:
+            last_profile_step = 0
+            # prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True)
+            # prof.start()
+            # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True) as prof:
             while True:
-                with hierarchical_timer("trainer_advance"):
-                    trainer.advance()
+                    with hierarchical_timer("trainer_advance"):
+                        trainer.advance()
+                    # if (trainer.update_steps - 100 > last_profile_step):
+                    #     print(f"Update step: {trainer.update_steps}:\n", prof.key_averages().table())
+                    #     last_profile_step = trainer.update_steps
+                    # prof.step()
         except(KeyboardInterrupt) as ex:
             logger.debug("Trainer process shutting down.")
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the trainer process.: {ex}")
         finally:
+            # prof.stop()
             write_timing_tree(trainer.run_log_path)
             logger.debug("Saving model")
             trainer.save_model()

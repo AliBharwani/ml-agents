@@ -29,6 +29,7 @@ from mlagents.trainers.settings import (
     TrainerSettings,
 )
 from mlagents.trainers.torch_entities.agent_action import AgentAction
+from torch.profiler import profile, record_function, ProfilerActivity
 
 @attr.s(auto_attribs=True)
 class SuperTrackSettings(OffPolicyHyperparamSettings):
@@ -92,7 +93,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         if self.first_update:
             self.first_update = False
             print("WORLD MODEL DEVICE: ", next(self._world_model.parameters()).device)
-            print("POLICY DEVICE: ", next(self.actor_gpu.parameters()).device)
+            cur_actor = self.policy.actor
+            if self.split_actor_devices:
+                cur_actor = self.actor_gpu
+            print("POLICY DEVICE: ", next(cur_actor.parameters()).device)
         window_size = raw_window_size + 1
         if (batch.num_experiences // window_size != batch_size):
                 raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size}, received {batch.num_experiences}")
@@ -226,6 +230,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             sim_char_tensors = [st_datum.sim_char_state.as_tensors for st_datum in st_data]
             kin_char_tensors = [st_datum.kin_char_state.as_tensors for st_datum in st_data]
             kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
+            pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
 
         with hierarchical_timer("_convert_to_usable_tensors"):
             s_pos, s_rots, s_vels, s_rvels, s_h, s_up = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
@@ -239,7 +244,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
         # It's okay to use pre target vels because we're not predicting velocity targets right now
-        pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
+        # pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
         loss = lpos = lvel = lrot = lang = lreg = lsreg = 0
         cur_actor = self.policy.actor
         if self.split_actor_devices:
