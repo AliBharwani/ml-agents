@@ -144,7 +144,7 @@ class TrainerController:
         else:
             trainer_config = self.trainer_factory.trainer_config[brain_name]
             if trainer_config.threaded:
-                trainer = self.trainer_factory.generate(brain_name)
+                trainer = self.trainer_factory.generate(brain_name, self.torch_settings)
                 # Only create trainer thread for new trainers
                 trainerthread = threading.Thread(
                     target=self.trainer_update_func, args=(trainer,), daemon=True
@@ -171,6 +171,7 @@ class TrainerController:
             parsed_behavior_id,
             env_manager.training_behaviors[name_behavior_id],
         )
+        trainer.torch_settings = self.torch_settings
         trainer.add_policy(parsed_behavior_id, policy)
 
         agent_manager = AgentManager(

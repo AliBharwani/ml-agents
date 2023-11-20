@@ -169,7 +169,7 @@ class TorchOptimizer(Optimizer):
 
         # Convert to tensors
         current_obs = [
-            ModelUtils.list_to_tensor(obs) for obs in ObsUtil.from_buffer(batch, n_obs)
+            _to_tensor(obs) for obs in ObsUtil.from_buffer(batch, n_obs)
         ]
         next_obs = [ModelUtils.list_to_tensor(obs) for obs in next_obs]
 

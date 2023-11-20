@@ -116,9 +116,9 @@ class TorchPolicy(Policy):
             run_out["entropy"] = ModelUtils.to_numpy(run_out["entropy"])
         if self.use_recurrent:
             run_out["memory_out"] = ModelUtils.to_numpy(memories).squeeze(0)
-        if "supertrack_data" in run_out:
-            for st_data in run_out["supertrack_data"]:
-                st_data.convert_to_numpy()
+        # if "supertrack_data" in run_out:
+        #     for st_data in run_out["supertrack_data"]:
+        #         st_data.convert_to_numpy()
         return run_out
 
     def get_action(

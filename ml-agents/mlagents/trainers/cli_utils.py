@@ -304,6 +304,12 @@ def _create_parser() -> argparse.ArgumentParser:
         action=DetectDefaultStoreTrue,
         help="Whether to enable anomaly detection for the Torch backend. This is useful for debugging.",
     )
+    torch_conf.add_argument(
+        "--profile",
+        default=False,
+        action=DetectDefaultStoreTrue,
+        help="Whether to enable PyTorch profiling detection for the Torch backend.",
+    )
     return argparser
 
 

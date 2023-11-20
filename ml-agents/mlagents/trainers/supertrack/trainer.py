@@ -28,7 +28,7 @@ from mlagents.trainers.policy import Policy
 from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
 from mlagents.trainers.trainer.rl_trainer import RLTrainer
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
-from mlagents.trainers.settings import TrainerSettings
+from mlagents.trainers.settings import TorchSettings, TrainerSettings
 from mlagents.trainers.supertrack.optimizer_torch import SuperTrackPolicyNetwork, TorchSuperTrackOptimizer, SuperTrackSettings
 from torch.profiler import profile, record_function, ProfilerActivity
 from mlagents.torch_utils import torch, default_device
@@ -95,6 +95,7 @@ class SuperTrackTrainer(RLTrainer):
         self.batch_size = self.hyperparameters.batch_size
         self.wm_batch_size = self.trainer_settings.world_model_network_settings.batch_size
         self.policy_batch_size = self.trainer_settings.policy_network_settings.batch_size
+        self.first_update = True
 
     @timed
     def _initialize(self):
@@ -134,50 +135,52 @@ class SuperTrackTrainer(RLTrainer):
         """
         super().save_model()
         logger.info("Finished calling super().save_model()")
-        if self.checkpoint_replay_buffer:
-            self.save_replay_buffer()
+        # if self.checkpoint_replay_buffer:
+        #     self.save_replay_buffer()
+    
+    # COMMENTED OUT WHILE USING SUPERTRACK_BUFFER 
 
-    def save_replay_buffer(self) -> None:
-        """
-        Save the training buffer's update buffer to a pickle file.
-        """
-        filename = os.path.join(self.artifact_path, "last_replay_buffer.hdf5")
-        logger.info(f"Saving Experience Replay Buffer to {filename}...")
-        with open(filename, "wb") as file_object:
-            self.update_buffer.save_to_file(file_object)
-            logger.info(
-                f"Saved Experience Replay Buffer ({os.path.getsize(filename)} bytes)."
-            )
+    # def save_replay_buffer(self) -> None:
+    #     """
+    #     Save the training buffer's update buffer to a pickle file.
+    #     """
+    #     filename = os.path.join(self.artifact_path, "last_replay_buffer.hdf5")
+    #     logger.info(f"Saving Experience Replay Buffer to {filename}...")
+    #     with open(filename, "wb") as file_object:
+    #         self.update_buffer.save_to_file(file_object)
+    #         logger.info(
+    #             f"Saved Experience Replay Buffer ({os.path.getsize(filename)} bytes)."
+    #         )
 
-    def maybe_load_replay_buffer(self):
-        # Load the replay buffer if load
-        if self.load and self.checkpoint_replay_buffer:
-            logger.info("Trying to load")
-            try:
-                self.load_replay_buffer()
-            except (AttributeError, FileNotFoundError):
-                logger.warning(
-                    "Replay buffer was unable to load, starting from scratch."
-                )
-            logger.debug(
-                "Loaded update buffer with {} sequences".format(
-                    self.update_buffer.num_experiences
-                )
-            )
+    # def maybe_load_replay_buffer(self):
+    #     # Load the replay buffer if load
+    #     if self.load and self.checkpoint_replay_buffer:
+    #         logger.info("Trying to load")
+    #         try:
+    #             self.load_replay_buffer()
+    #         except (AttributeError, FileNotFoundError):
+    #             logger.warning(
+    #                 "Replay buffer was unable to load, starting from scratch."
+    #             )
+    #         logger.debug(
+    #             "Loaded update buffer with {} sequences".format(
+    #                 self.update_buffer.num_experiences
+    #             )
+    #         )
 
-    def load_replay_buffer(self) -> None:
-        """
-        Loads the last saved replay buffer from a file.
-        """
-        filename = os.path.join(self.artifact_path, "last_replay_buffer.hdf5")
-        logger.info(f"Loading Experience Replay Buffer from {filename}...")
-        with open(filename, "rb+") as file_object:
-            self.update_buffer.load_from_file(file_object)
-        logger.debug(
-            "Experience replay buffer has {} experiences.".format(
-                self.update_buffer.num_experiences
-            )
-        )
+    # def load_replay_buffer(self) -> None:
+    #     """
+    #     Loads the last saved replay buffer from a file.
+    #     """
+    #     filename = os.path.join(self.artifact_path, "last_replay_buffer.hdf5")
+    #     logger.info(f"Loading Experience Replay Buffer from {filename}...")
+    #     with open(filename, "rb+") as file_object:
+    #         self.update_buffer.load_from_file(file_object)
+    #     logger.debug(
+    #         "Experience replay buffer has {} experiences.".format(
+    #             self.update_buffer.num_experiences
+    #         )
+    #     )
     
     def _has_enough_data_to_train(self) -> bool:
         """
@@ -223,6 +226,39 @@ class SuperTrackTrainer(RLTrainer):
         self.update_steps = int(max(1, self._step / self.steps_per_update))
 
 
+    def start_profiler(self):
+        if not self.first_update or not self.torch_settings.profile:
+            return
+        # def trace_handler(prof: profile):
+        #     prof.export_chrome_trace("./results/ignore/st_trace.pt.trace.json")
+        #     torch.profiler.tensorboard_trace_handler('./results/ignore/log/supertracktrace')(prof)
+        #     # torch.profiler.tensorboard_trace_handler("E:/Unity Projects/SuperTrack-Unity/results/ignore/st_data")
+        #     print(f"Update step: {self.update_steps}:\n", prof.key_averages().table(row_limit=-1))
+        self.prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+                       schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1), 
+                       profile_memory=True, 
+                       on_trace_ready= torch.profiler.tensorboard_trace_handler('./results/ignore/trace'), 
+                       with_stack=True,
+                       record_shapes=True)
+    
+    def step_profiler(self):
+        if not self.first_update or not self.torch_settings.profile:
+            return
+        try:
+            self.prof.step()
+        except Exception as e:
+            print(e)
+            print("Profiler failed to step")
+
+    def stop_profiler(self):
+        if not self.first_update or not self.torch_settings.profile:
+            return
+        try:
+            self.prof.stop()
+        except Exception as e:
+            print(e)
+            print("Profiler failed to stop")
+
     @timed
     def _update_policy(self) -> bool:
         """
@@ -231,10 +267,7 @@ class SuperTrackTrainer(RLTrainer):
         """
         has_updated = False
         batch_update_stats: Dict[str, list] = defaultdict(list)
-        def trace_handler(prof: profile):
-            print(f"Update step: {self.update_steps}:\n", prof.key_averages().table(row_limit=-1))
-        # prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1), profile_memory=True, on_trace_ready=trace_handler)
-        # prof.start()
+        self.start_profiler()
         while (
             self._step - self.hyperparameters.buffer_init_steps
         ) / self.update_steps > self.steps_per_update:
@@ -254,10 +287,11 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
             else:
                 raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
-        #     prof.step()
-        # prof.stop()
+            self.step_profiler()
+        self.stop_profiler()
         if has_updated:
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
+            self.first_update = False
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
         with hierarchical_timer("update_buffer.truncate"):
@@ -276,9 +310,16 @@ class SuperTrackTrainer(RLTrainer):
         super()._process_trajectory(trajectory)
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
         if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
-            self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
+            # self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
             SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory, device=default_device())
+        else:
+            # Bring CPU tensors to GPU 
+            for st_datum in agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]:
+                # print("Moving supertrack data on trajectory to GPU")
+                st_datum.to(default_device())
         self._append_to_update_buffer(agent_buffer_trajectory)
+        # supertrack_trajectory = trajectory.to_supertrack_trajectory()
+        # self._append_to_supertrack_buffer(supertrack_trajectory)
 
     def create_optimizer(self) -> TorchOptimizer:
         return TorchSuperTrackOptimizer(  # type: ignore
@@ -306,7 +347,7 @@ class SuperTrackTrainer(RLTrainer):
             actor_kwargs,
             split_on_cpugpu=self.multiprocess,
         )
-        self.maybe_load_replay_buffer()
+        # self.maybe_load_replay_buffer()
         return policy
 
     def get_policy(self, name_behavior_id: str) -> Policy:

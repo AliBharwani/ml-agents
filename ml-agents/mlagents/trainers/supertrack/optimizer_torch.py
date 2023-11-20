@@ -103,10 +103,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
         st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
-        sim_char_tensors = [st_datum.sim_char_state.as_tensors for st_datum in st_data]
+        sim_char_tensors = [st_datum.sim_char_state.as_tensors() for st_datum in st_data]
         positions, rotations, vels, rot_vels, heights, up_dir = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
         
-        kin_targets = [st_datum.post_targets.as_tensors for st_datum in st_data]
+        kin_targets = [st_datum.post_targets.as_tensors() for st_datum in st_data]
         kin_rot_t, kin_rvel_t = self._convert_pdtargets_to_usable_tensors(kin_targets, batch_size, window_size, True)
         kin_rot_t =  pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(kin_rot_t))
 
@@ -224,19 +224,19 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         if (batch.num_experiences // window_size != batch_size):
                 raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size} = {window_size*batch_size}, received {batch.num_experiences}, diff: {batch.num_experiences - window_size*batch_size}")
 
-        with hierarchical_timer("gen tensors"):
+        with record_function("gen tensors"):
             # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
             st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
-            sim_char_tensors = [st_datum.sim_char_state.as_tensors for st_datum in st_data]
-            kin_char_tensors = [st_datum.kin_char_state.as_tensors for st_datum in st_data]
-            kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
+            sim_char_tensors = [st_datum.sim_char_state.as_tensors() for st_datum in st_data]
+            kin_char_tensors = [st_datum.kin_char_state.as_tensors() for st_datum in st_data]
+            kin_pre_targets = [st_datum.pre_targets.as_tensors() for st_datum in st_data]
             pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
 
-        with hierarchical_timer("_convert_to_usable_tensors"):
+        with record_function("_convert_to_usable_tensors"):
             s_pos, s_rots, s_vels, s_rvels, s_h, s_up = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
             k_pos, k_rots, k_vels, k_rvels, k_h, k_up = self._convert_to_usable_tensors(kin_char_tensors, batch_size, window_size)
 
-        with hierarchical_timer("clone / detach"):
+        with record_function("clone / detach"):
             cur_spos = s_pos[:, 0, ...].clone().detach()
             cur_srots = s_rots[:, 0, ...].clone().detach()
             cur_svels = s_vels[:, 0, ...].clone().detach()
@@ -252,11 +252,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         cur_actor.train()
         self._world_model.eval()
         
-        with hierarchical_timer("set grads on world model"):
-            for param in self._world_model.parameters():
-                param.requires_grad = False
+        # with record_function("set grads on world model"):
+        #     for param in self._world_model.parameters():
+        #         param.requires_grad = False
         for i in range(raw_window_size):
-            with hierarchical_timer("update one window step"):
+            with record_function("update one window step"):
                 local_kin = SupertrackUtils.local(k_pos[:, i, ...], k_rots[:, i, ...], k_vels[:, i, ...], k_rvels[:, i, ...], k_h[:, i, ...], k_up[:, i, ...])
                 # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
                 cur_spos[:, 0, :] = s_pos[:, i, 0, :].clone().detach()
@@ -325,16 +325,16 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                         "Policy/reg_loss": lreg.item(),
                         "Policy/sreg_loss": lsreg.item(),
                         "Policy/learning_rate": self.policy_lr}
-        with hierarchical_timer("policy optimizer step"):
+        with record_function("policy optimizer step"):
             self.policy_optimizer.zero_grad()
             loss.backward()
             self.policy_optimizer.step()
-        self._world_model.train()
-        for param in self._world_model.parameters():
-            param.requires_grad = True
+        # self._world_model.train()
+        # for param in self._world_model.parameters():
+        #     param.requires_grad = True
 
         # copy policy to cpu 
-        with hierarchical_timer("copy policy to cpu"):
+        with record_function("copy policy to cpu"):
             if self.split_actor_devices:
                 self.policy.actor.load_state_dict(self.actor_gpu.state_dict())
         return update_stats
@@ -477,7 +477,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
     @timed
     def get_action_and_stats(
         self,
-        inputs: List[Union[torch.Tensor, np.ndarray]],
+        inputs: List[torch.Tensor],
         masks: Optional[torch.Tensor] = None,
         memories: Optional[torch.Tensor] = None,
         sequence_length: int = 1,
@@ -505,7 +505,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN]
         policy_input = inputs[0]
         if not inputs_already_formatted:
-            supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
+            supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input, pin_memory=True)
             policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
         if policy_input.shape[-1] != POLICY_INPUT_LEN:
             raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
@@ -517,10 +517,10 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
-        # if supertrack_data is not None:
-        #     for st_datum in supertrack_data:
-        #         st_datum.convert_to_numpy()
-        #     run_out["supertrack_data"] = supertrack_data
+        if supertrack_data is not None:
+            # for st_datum in supertrack_data:
+            #     st_datum.convert_to_numpy()
+            run_out["supertrack_data"] = supertrack_data
         if return_means:
             run_out["means"] = means
         run_out["log_probs"] = log_probs
