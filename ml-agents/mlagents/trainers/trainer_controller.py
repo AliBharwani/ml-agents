@@ -371,17 +371,9 @@ class TrainerController:
         except Exception as e:
             print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
         try:
-            last_profile_step = 0
-            # prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True)
-            # prof.start()
-            # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True) as prof:
             while True:
                     with hierarchical_timer("trainer_advance"):
                         trainer.advance()
-                    # if (trainer.update_steps - 100 > last_profile_step):
-                    #     print(f"Update step: {trainer.update_steps}:\n", prof.key_averages().table())
-                    #     last_profile_step = trainer.update_steps
-                    # prof.step()
         except(KeyboardInterrupt) as ex:
             logger.debug("Trainer process shutting down.")
         except Exception as ex:

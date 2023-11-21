@@ -219,11 +219,12 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         return pos, rots, vels, rvels
         
     @timed
-    def update_policy(self, batch: AgentBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]: 
+    def update_policy(self, batch: AgentBuffer, batch_size: int, raw_window_size: int, nsys_profiler_running: bool = False) -> Dict[str, float]: 
         window_size = raw_window_size + 1
         if (batch.num_experiences // window_size != batch_size):
                 raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size} = {window_size*batch_size}, received {batch.num_experiences}, diff: {batch.num_experiences - window_size*batch_size}")
 
+        if nsys_profiler_running: torch.cuda.nvtx.range_push("gen tensors")
         with record_function("gen tensors"):
             # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
             st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
@@ -231,16 +232,21 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             kin_char_tensors = [st_datum.kin_char_state.as_tensors() for st_datum in st_data]
             kin_pre_targets = [st_datum.pre_targets.as_tensors() for st_datum in st_data]
             pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
+        if nsys_profiler_running: torch.cuda.nvtx.range_pop()
 
+        if nsys_profiler_running: torch.cuda.nvtx.range_push("_convert_to_usable_tensors")
         with record_function("_convert_to_usable_tensors"):
             s_pos, s_rots, s_vels, s_rvels, s_h, s_up = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
             k_pos, k_rots, k_vels, k_rvels, k_h, k_up = self._convert_to_usable_tensors(kin_char_tensors, batch_size, window_size)
+        if nsys_profiler_running: torch.cuda.nvtx.range_pop()
 
+        if nsys_profiler_running: torch.cuda.nvtx.range_push("clone / detach")
         with record_function("clone / detach"):
             cur_spos = s_pos[:, 0, ...].clone().detach()
             cur_srots = s_rots[:, 0, ...].clone().detach()
             cur_svels = s_vels[:, 0, ...].clone().detach()
             cur_srvels = s_rvels[:, 0, ...].clone().detach()
+        if nsys_profiler_running: torch.cuda.nvtx.range_pop()
 
         # kin_pre_targets = [st_datum.pre_targets.as_tensors for st_datum in st_data]
         # It's okay to use pre target vels because we're not predicting velocity targets right now
@@ -256,7 +262,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         #     for param in self._world_model.parameters():
         #         param.requires_grad = False
         for i in range(raw_window_size):
+            if nsys_profiler_running: torch.cuda.nvtx.range_push("update one window step")
             with record_function("update one window step"):
+                if nsys_profiler_running: torch.cuda.nvtx.range_push("gen actor output")
                 local_kin = SupertrackUtils.local(k_pos[:, i, ...], k_rots[:, i, ...], k_vels[:, i, ...], k_rvels[:, i, ...], k_h[:, i, ...], k_up[:, i, ...])
                 # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
                 cur_spos[:, 0, :] = s_pos[:, i, 0, :].clone().detach()
@@ -270,6 +278,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                 output = action.continuous_tensor.reshape(batch_size, NUM_T_BONES, 3)
                 # output = SupertrackUtils.convert_actions_to_quat(output, self.offset_scale)
                 output =  pyt.axis_angle_to_quaternion(output * self.offset_scale)
+                if nsys_profiler_running:  torch.cuda.nvtx.range_pop()
                 # Compute PD targets
                 cur_kin_targets = pyt.quaternion_multiply(pre_target_rots[:, i, ...], output)
                 # Pass through world model
@@ -294,6 +303,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                 next_frame_kin = [k_pos[:, i+1, ...], k_rots[:, i+1, ...], k_vels[:, i+1, ...], k_rvels[:, i+1, ...], k_h[:, i+1, ...], k_up[:, i+1, ...]]
                 local_kpos, local_krots, local_kvels, local_krvels, _, _ = SupertrackUtils.local(*[t.clone().detach() for t in next_frame_kin], rots_as_twoaxis=False, unzip_to_batchsize=False)
 
+                if nsys_profiler_running: torch.cuda.nvtx.range_push("char_state_loss")
+
                 step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(local_spos, 
                                                                                 local_kpos,
                                                                                 local_srots,
@@ -302,6 +313,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                                 local_kvels, 
                                                                                 local_srvels, 
                                                                                 local_krvels)
+                if nsys_profiler_running: torch.cuda.nvtx.range_pop()
                 loss += step_loss
                 lpos += raw_losses[0]
                 lvel += raw_losses[1]
@@ -316,7 +328,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                 lreg += step_lreg
                 lsreg += step_lsreg
                 loss += step_lreg + step_lsreg
-            
+            if nsys_profiler_running: torch.cuda.nvtx.range_pop()
+
         update_stats = {"Policy/Loss": loss.item(),
                         "Policy/pos_loss": lpos.item(),
                         "Policy/vel_loss": lvel.item(),

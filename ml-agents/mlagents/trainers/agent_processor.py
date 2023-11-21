@@ -481,7 +481,8 @@ class AgentManager(AgentProcessor):
         use_pytorch_mp: bool = False,
     ):
         super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
-        trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
+        # trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
+        trajectory_queue_len = 1000
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
             self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, name = "trajectory_queue"
         )

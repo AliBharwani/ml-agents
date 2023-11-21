@@ -26,7 +26,7 @@ from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 from mlagents_envs.timers import hierarchical_timer, timed
 from mlagents.trainers.policy import Policy
 from mlagents.trainers.optimizer.torch_optimizer import TorchOptimizer
-from mlagents.trainers.trainer.rl_trainer import RLTrainer
+from mlagents.trainers.trainer.rl_trainer import ProfilerState, RLTrainer
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
 from mlagents.trainers.settings import TorchSettings, TrainerSettings
 from mlagents.trainers.supertrack.optimizer_torch import SuperTrackPolicyNetwork, TorchSuperTrackOptimizer, SuperTrackSettings
@@ -139,48 +139,47 @@ class SuperTrackTrainer(RLTrainer):
         #     self.save_replay_buffer()
     
     # COMMENTED OUT WHILE USING SUPERTRACK_BUFFER 
+    def save_replay_buffer(self) -> None:
+        """
+        Save the training buffer's update buffer to a pickle file.
+        """
+        filename = os.path.join(self.artifact_path, "last_replay_buffer.hdf5")
+        logger.info(f"Saving Experience Replay Buffer to {filename}...")
+        with open(filename, "wb") as file_object:
+            self.update_buffer.save_to_file(file_object)
+            logger.info(
+                f"Saved Experience Replay Buffer ({os.path.getsize(filename)} bytes)."
+            )
 
-    # def save_replay_buffer(self) -> None:
-    #     """
-    #     Save the training buffer's update buffer to a pickle file.
-    #     """
-    #     filename = os.path.join(self.artifact_path, "last_replay_buffer.hdf5")
-    #     logger.info(f"Saving Experience Replay Buffer to {filename}...")
-    #     with open(filename, "wb") as file_object:
-    #         self.update_buffer.save_to_file(file_object)
-    #         logger.info(
-    #             f"Saved Experience Replay Buffer ({os.path.getsize(filename)} bytes)."
-    #         )
+    def maybe_load_replay_buffer(self):
+        # Load the replay buffer if load
+        if self.load and self.checkpoint_replay_buffer:
+            logger.info("Trying to load")
+            try:
+                self.load_replay_buffer()
+            except (AttributeError, FileNotFoundError):
+                logger.warning(
+                    "Replay buffer was unable to load, starting from scratch."
+                )
+            logger.debug(
+                "Loaded update buffer with {} sequences".format(
+                    self.update_buffer.num_experiences
+                )
+            )
 
-    # def maybe_load_replay_buffer(self):
-    #     # Load the replay buffer if load
-    #     if self.load and self.checkpoint_replay_buffer:
-    #         logger.info("Trying to load")
-    #         try:
-    #             self.load_replay_buffer()
-    #         except (AttributeError, FileNotFoundError):
-    #             logger.warning(
-    #                 "Replay buffer was unable to load, starting from scratch."
-    #             )
-    #         logger.debug(
-    #             "Loaded update buffer with {} sequences".format(
-    #                 self.update_buffer.num_experiences
-    #             )
-    #         )
-
-    # def load_replay_buffer(self) -> None:
-    #     """
-    #     Loads the last saved replay buffer from a file.
-    #     """
-    #     filename = os.path.join(self.artifact_path, "last_replay_buffer.hdf5")
-    #     logger.info(f"Loading Experience Replay Buffer from {filename}...")
-    #     with open(filename, "rb+") as file_object:
-    #         self.update_buffer.load_from_file(file_object)
-    #     logger.debug(
-    #         "Experience replay buffer has {} experiences.".format(
-    #             self.update_buffer.num_experiences
-    #         )
-    #     )
+    def load_replay_buffer(self) -> None:
+        """
+        Loads the last saved replay buffer from a file.
+        """
+        filename = os.path.join(self.artifact_path, "last_replay_buffer.hdf5")
+        logger.info(f"Loading Experience Replay Buffer from {filename}...")
+        with open(filename, "rb+") as file_object:
+            self.update_buffer.load_from_file(file_object)
+        logger.debug(
+            "Experience replay buffer has {} experiences.".format(
+                self.update_buffer.num_experiences
+            )
+        )
     
     def _has_enough_data_to_train(self) -> bool:
         """
@@ -235,7 +234,7 @@ class SuperTrackTrainer(RLTrainer):
         #     # torch.profiler.tensorboard_trace_handler("E:/Unity Projects/SuperTrack-Unity/results/ignore/st_data")
         #     print(f"Update step: {self.update_steps}:\n", prof.key_averages().table(row_limit=-1))
         self.prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-                       schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1), 
+                       schedule=torch.profiler.schedule(wait=1, warmup=1, active=5, repeat=1), 
                        profile_memory=True, 
                        on_trace_ready= torch.profiler.tensorboard_trace_handler('./results/ignore/trace'), 
                        with_stack=True,
@@ -247,17 +246,13 @@ class SuperTrackTrainer(RLTrainer):
         try:
             self.prof.step()
         except Exception as e:
-            print(e)
-            print("Profiler failed to step")
+            print(f"Profiler failed to step: {e}")
 
     def stop_profiler(self):
         if not self.first_update or not self.torch_settings.profile:
             return
-        try:
-            self.prof.stop()
-        except Exception as e:
-            print(e)
-            print("Profiler failed to stop")
+        torch.cuda.cudart().cudaProfilerStop()
+
 
     @timed
     def _update_policy(self) -> bool:
@@ -266,18 +261,37 @@ class SuperTrackTrainer(RLTrainer):
         until the steps_per_update ratio is met.
         """
         has_updated = False
+        nsys_profiler_running = self.profiler_state == ProfilerState.RUNNING
         batch_update_stats: Dict[str, list] = defaultdict(list)
-        self.start_profiler()
+        profiler_iterations = 0
+        warmup_iters = 5
+        def _should_start_profiler():
+            return self.update_steps == warmup_iters
+        def _profiler_is_running():
+            return self.update_steps >= warmup_iters and self.update_steps < 10
+        def _should_stop_profiler():
+            return self.update_steps == 10
         while (
             self._step - self.hyperparameters.buffer_init_steps
         ) / self.update_steps > self.steps_per_update:
             buffer = self.update_buffer
+            # if _should_start_profiler(): torch.cuda.cudart().cudaProfilerStart()
+            if nsys_profiler_running: torch.cuda.nvtx.range_push(f"iteration {profiler_iterations}")
+
             if self._has_enough_data_to_train():
+                if nsys_profiler_running: torch.cuda.nvtx.range_push("supertrack_sample_mini_batch")
                 world_model_minibatch = buffer.supertrack_sample_mini_batch(self.wm_batch_size,self.wm_window)
                 policy_minibatch = buffer.supertrack_sample_mini_batch(self.policy_batch_size, self.policy_window)
+                if nsys_profiler_running: torch.cuda.nvtx.range_pop()
 
+                if nsys_profiler_running: torch.cuda.nvtx.range_push("update_world_model")
                 update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_batch_size, self.wm_window)
-                update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window))
+                if nsys_profiler_running: torch.cuda.nvtx.range_pop()
+
+                if nsys_profiler_running: torch.cuda.nvtx.range_push("update_policy")
+                update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window, nsys_profiler_running=True))
+                if nsys_profiler_running: torch.cuda.nvtx.range_pop()
+
                 for stat_name, value in update_stats.items():
                     batch_update_stats[stat_name].append(value)
 
@@ -287,8 +301,11 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
             else:
                 raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
-            self.step_profiler()
-        self.stop_profiler()
+            # self.step_profiler()
+            profiler_iterations += 1
+            if nsys_profiler_running: torch.cuda.nvtx.range_pop()
+            # if _should_stop_profiler(): torch.cuda.cudart().cudaProfilerStop()
+        # self.stop_profiler()
         if has_updated:
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
             self.first_update = False
@@ -309,14 +326,14 @@ class SuperTrackTrainer(RLTrainer):
         """
         super()._process_trajectory(trajectory)
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-        if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
-            # self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
-            SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory, device=default_device())
-        else:
+        # if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
+        #     # self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
+        #     SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory, device=default_device())
+        # else:
             # Bring CPU tensors to GPU 
-            for st_datum in agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]:
-                # print("Moving supertrack data on trajectory to GPU")
-                st_datum.to(default_device())
+        for st_datum in agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]:
+            # print("Moving supertrack data on trajectory to GPU")
+            st_datum.to(default_device())
         self._append_to_update_buffer(agent_buffer_trajectory)
         # supertrack_trajectory = trajectory.to_supertrack_trajectory()
         # self._append_to_supertrack_buffer(supertrack_trajectory)
