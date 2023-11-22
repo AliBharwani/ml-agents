@@ -4,6 +4,7 @@
 
 from collections import defaultdict
 import copy
+from datetime import datetime
 import threading
 from typing import Dict, cast
 import os
@@ -135,8 +136,8 @@ class SuperTrackTrainer(RLTrainer):
         """
         super().save_model()
         logger.info("Finished calling super().save_model()")
-        # if self.checkpoint_replay_buffer:
-        #     self.save_replay_buffer()
+        if self.checkpoint_replay_buffer:
+            self.save_replay_buffer()
     
     # COMMENTED OUT WHILE USING SUPERTRACK_BUFFER 
     def save_replay_buffer(self) -> None:
@@ -224,36 +225,6 @@ class SuperTrackTrainer(RLTrainer):
         # Assume steps were updated at the correct ratio before
         self.update_steps = int(max(1, self._step / self.steps_per_update))
 
-
-    def start_profiler(self):
-        if not self.first_update or not self.torch_settings.profile:
-            return
-        # def trace_handler(prof: profile):
-        #     prof.export_chrome_trace("./results/ignore/st_trace.pt.trace.json")
-        #     torch.profiler.tensorboard_trace_handler('./results/ignore/log/supertracktrace')(prof)
-        #     # torch.profiler.tensorboard_trace_handler("E:/Unity Projects/SuperTrack-Unity/results/ignore/st_data")
-        #     print(f"Update step: {self.update_steps}:\n", prof.key_averages().table(row_limit=-1))
-        self.prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-                       schedule=torch.profiler.schedule(wait=1, warmup=1, active=5, repeat=1), 
-                       profile_memory=True, 
-                       on_trace_ready= torch.profiler.tensorboard_trace_handler('./results/ignore/trace'), 
-                       with_stack=True,
-                       record_shapes=True)
-    
-    def step_profiler(self):
-        if not self.first_update or not self.torch_settings.profile:
-            return
-        try:
-            self.prof.step()
-        except Exception as e:
-            print(f"Profiler failed to step: {e}")
-
-    def stop_profiler(self):
-        if not self.first_update or not self.torch_settings.profile:
-            return
-        torch.cuda.cudart().cudaProfilerStop()
-
-
     @timed
     def _update_policy(self) -> bool:
         """
@@ -263,31 +234,29 @@ class SuperTrackTrainer(RLTrainer):
         has_updated = False
         nsys_profiler_running = self.profiler_state == ProfilerState.RUNNING
         batch_update_stats: Dict[str, list] = defaultdict(list)
-        profiler_iterations = 0
-        warmup_iters = 5
-        def _should_start_profiler():
-            return self.update_steps == warmup_iters
-        def _profiler_is_running():
-            return self.update_steps >= warmup_iters and self.update_steps < 10
-        def _should_stop_profiler():
-            return self.update_steps == 10
-        while (
+        MAX_UPDATE_ITERATIONS = 100
+        update_steps_before = self.update_steps
+        num_steps_to_update = min(MAX_UPDATE_ITERATIONS, int((self._step - self.hyperparameters.buffer_init_steps) / self.steps_per_update))
+        print(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times - self._step: {self._step}")
+        while  (self.update_steps - update_steps_before) < MAX_UPDATE_ITERATIONS and (
             self._step - self.hyperparameters.buffer_init_steps
         ) / self.update_steps > self.steps_per_update:
             buffer = self.update_buffer
-            # if _should_start_profiler(): torch.cuda.cudart().cudaProfilerStart()
-            if nsys_profiler_running: torch.cuda.nvtx.range_push(f"iteration {profiler_iterations}")
+            if nsys_profiler_running: torch.cuda.nvtx.range_push(f"iteration {self.update_steps - update_steps_before}")
 
             if self._has_enough_data_to_train():
+                # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering supertrack_sample_mini_batch")
                 if nsys_profiler_running: torch.cuda.nvtx.range_push("supertrack_sample_mini_batch")
                 world_model_minibatch = buffer.supertrack_sample_mini_batch(self.wm_batch_size,self.wm_window)
                 policy_minibatch = buffer.supertrack_sample_mini_batch(self.policy_batch_size, self.policy_window)
                 if nsys_profiler_running: torch.cuda.nvtx.range_pop()
 
+                # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering update_world_model")
                 if nsys_profiler_running: torch.cuda.nvtx.range_push("update_world_model")
                 update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_batch_size, self.wm_window)
                 if nsys_profiler_running: torch.cuda.nvtx.range_pop()
 
+                # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering optimizer update_policy")
                 if nsys_profiler_running: torch.cuda.nvtx.range_push("update_policy")
                 update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window, nsys_profiler_running=True))
                 if nsys_profiler_running: torch.cuda.nvtx.range_pop()
@@ -301,21 +270,21 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
             else:
                 raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
-            # self.step_profiler()
-            profiler_iterations += 1
             if nsys_profiler_running: torch.cuda.nvtx.range_pop()
-            # if _should_stop_profiler(): torch.cuda.cudart().cudaProfilerStop()
-        # self.stop_profiler()
+
         if has_updated:
+            num_updates = self.update_steps - update_steps_before
+            self._stats_reporter.add_stat("Avg # Updates", num_updates, StatsAggregationMethod.AVERAGE)
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
             self.first_update = False
         # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
         # a large buffer at each update.
-        with hierarchical_timer("update_buffer.truncate"):
-            if self.update_buffer.num_experiences > self.hyperparameters.buffer_size * 1.5:
+        if self.update_buffer.num_experiences > self.hyperparameters.buffer_size:
+            with hierarchical_timer("update_buffer.truncate"):
                 self.update_buffer.truncate_on_traj_end(
                     int(self.hyperparameters.buffer_size * BUFFER_TRUNCATE_PERCENT)
                 )
+                logger.info(f"Truncated update buffer to {self.update_buffer.num_experiences} experiences")
         return has_updated
 
 ### FROM SAC TRAINER LEVEL
@@ -335,8 +304,6 @@ class SuperTrackTrainer(RLTrainer):
             # print("Moving supertrack data on trajectory to GPU")
             st_datum.to(default_device())
         self._append_to_update_buffer(agent_buffer_trajectory)
-        # supertrack_trajectory = trajectory.to_supertrack_trajectory()
-        # self._append_to_supertrack_buffer(supertrack_trajectory)
 
     def create_optimizer(self) -> TorchOptimizer:
         return TorchSuperTrackOptimizer(  # type: ignore

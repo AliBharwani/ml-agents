@@ -1,4 +1,5 @@
 from collections import defaultdict
+import datetime
 from enum import Enum
 import enum
 import pdb
@@ -181,6 +182,8 @@ class ConsoleWriter(StatsWriter):
         log_info: List[str] = [category]
         log_info.append(f"Step: {step}")
         log_info.append(f"Time Elapsed: {elapsed_time:0.3f} s")
+        log_info.append(datetime.datetime.now().strftime("%I:%M %p"))
+
         if "Environment/Cumulative Reward" in values:
             stats_summary = values["Environment/Cumulative Reward"]
             if self.rank is not None:
@@ -205,6 +208,10 @@ class ConsoleWriter(StatsWriter):
             )
         if "Num Training Updates" in values:
             log_info.append(f"Num Training Updates: {values['Num Training Updates'].full_dist[0]}")
+        if "Avg # Updates" in values:
+            log_info.append(f"Avg # Updates: {values['Avg # Updates'].mean:0.3f}")
+        if "Avg # Traj Read" in values:
+            log_info.append(f"Avg # Traj Read: {values['Avg # Traj Read'].mean:0.3f}")
         # else:
         #     log_info.append("No episode was completed since last summary")
         #     log_info.append(is_training)
@@ -492,7 +499,7 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
                         writer.add_property(category, property_type, value)
             if not _queried:
                 # Yield thread to avoid busy-waiting
-                time.sleep(.001)
+                time.sleep(.0001)
     except(KeyboardInterrupt) as ex:
         logger.debug("StatsReporter shutting down.")
     except Exception as ex:

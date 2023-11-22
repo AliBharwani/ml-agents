@@ -1,5 +1,7 @@
 # # Unity ML-Agents Toolkit
+from datetime import datetime
 import enum
+from pstats import Stats
 import trace
 from typing import Dict, List, Optional
 from collections import defaultdict
@@ -283,54 +285,65 @@ class RLTrainer(Trainer):
                     "Please use the POCA trainer for best results."
                 )
                 self._has_warned_group_rewards = True
-
+                
     def advance(self) -> None:
         """
         Steps the trainer, taking in trajectories and updates if ready.
         Will block and wait briefly if there are no trajectories.
         """
-        if self.was_prev_ready_for_update and self.profiler_state == ProfilerState.NOT_STARTED:
-            print(f"Starting cudart on update_step: {self.update_steps}")
-            torch.cuda.cudart().cudaProfilerStart()
-            self.profiler_state = ProfilerState.RUNNING
+        # if self.torch_settings.profile and self.was_prev_ready_for_update and self.profiler_state == ProfilerState.NOT_STARTED:
+        #     print(f"Starting cudart on update_step: {self.update_steps}")
+        #     torch.cuda.cudart().cudaProfilerStart()
+        #     self.profiler_state = ProfilerState.RUNNING
         
-        if self.profiler_state == ProfilerState.RUNNING and self.update_steps > 5:
-            torch.cuda.cudart().cudaProfilerStop()
-            print(f"Stopping cudart on update_step: {self.update_steps}")
-            self.profiler_state = ProfilerState.STOPPED
+        # if self.profiler_state == ProfilerState.RUNNING and self.update_steps > 5:
+        #     torch.cuda.cudart().cudaProfilerStop()
+        #     print(f"Stopping cudart on update_step: {self.update_steps}")
+        #     self.profiler_state = ProfilerState.STOPPED
 
         if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_push(f"process_trajectory")
+        processed_large_number_of_trajectories = False 
         with hierarchical_timer("process_trajectory"):
             for traj_queue in self.trajectory_queues:
                 # We grab at most the maximum length of the queue.
                 # This ensures that even if the queue is being filled faster than it is
                 # being emptied, the trajectories in the queue are on-policy.
                 _queried = False
+                num_read = 0
+                processed_large_number_of_trajectories = traj_queue.qsize() > 150
+                if (processed_large_number_of_trajectories):
+                    print(f"{datetime.now().strftime('%I:%M:%S ')} Large number of trajectories in queue: {traj_queue.qsize()}")
                 for _ in range(traj_queue.qsize()):
                     _queried = True
                     try:
                         t = traj_queue.get_nowait()
                         self._process_trajectory(t)
+                        num_read += 1
                     except AgentManagerQueue.Empty:
                         break
                 if (self.threaded or self.multiprocess) and not _queried:
                     # Yield thread to avoid busy-waiting
                     time.sleep(0.0001)
+                if num_read > 0:
+                    self.stats_reporter.add_stat('Avg # Traj Read', num_read, StatsAggregationMethod.AVERAGE)
         if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_pop()
-
+        if (processed_large_number_of_trajectories):
+            print(f"{datetime.now().strftime('%I:%M:%S ')} Finished processing trajectories in queue, num_read: {num_read}")
         if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_push(f"_update_policy")
         if self.should_still_train:
             if self._is_ready_update():
-                if not self.was_prev_ready_for_update and self.profiler_state == ProfilerState.NOT_STARTED:
-                    self.was_prev_ready_for_update = True
-                    return
+                # if not self.was_prev_ready_for_update and self.profiler_state == ProfilerState.NOT_STARTED:
+                #     self.was_prev_ready_for_update = True
+                #     return
                 with hierarchical_timer("_update_policy"):
+                    print(f"{datetime.now().strftime('%I:%M:%S ')} Entering trainer update policy")
                     if self._update_policy():
                         if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_push("put in policy queue")
                         for q in self.policy_queues:
                             # Get policies that correspond to the policy queue in question
                             q.put(self.get_policy(q.behavior_id))
                         if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_pop()
+                    print(f"{datetime.now().strftime('%I:%M:%S ')} Exiting trainer update policy")
 
         if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_pop()
 

@@ -59,11 +59,11 @@ class CharState():
     up_dir: Union[np.ndarray, torch.Tensor]
     
     # @functools.cached_property
-    def as_tensors(self):
+    def as_tensors(self, device = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: # -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if not torch.is_tensor(self.positions):
             raise Exception("CharState.as_tensors called on non-tensor object")
             return torch.tensor(self.positions, dtype=torch.float32), torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.velocities, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32), torch.tensor(self.heights, dtype=torch.float32), torch.tensor(self.up_dir, dtype=torch.float32)#[None, :]
-        return self.positions, self.rotations, self.velocities, self.rot_velocities, self.heights, self.up_dir
+        return self.positions.to(device, non_blocking=True), self.rotations.to(device, non_blocking=True), self.velocities.to(device, non_blocking=True), self.rot_velocities.to(device, non_blocking=True), self.heights.to(device, non_blocking=True), self.up_dir.to(device, non_blocking=True)
     
     # @functools.cached_property
     def values(self):
@@ -97,11 +97,11 @@ class PDTargets():
     rot_velocities : Union[np.ndarray, torch.Tensor]
 
     # @functools.cached_property
-    def as_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]: 
+    def as_tensors(self, device = None) -> Tuple[torch.Tensor, torch.Tensor]: 
         if not torch.is_tensor(self.rotations):
             raise Exception("PDTargets.as_tensors called on non-tensor object")
             return torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32)
-        return self.rotations, self.rot_velocities
+        return self.rotations.to(device, non_blocking=True), self.rot_velocities.to(device, non_blocking=True)
     
     # @functools.cached_property
     def values(self):
