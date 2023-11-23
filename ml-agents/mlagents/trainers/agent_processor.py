@@ -395,8 +395,8 @@ class AgentManagerQueue(Generic[T]):
         self.use_pytorch_mp = use_pytorch_mp
 
         if use_pytorch_mp:
-            self._queue = mp_queue.TorchQueue(maxsize=maxlen)
-            atexit.register(self._onexit)
+            self._queue = mp_queue.TorchQueue(name=name, maxsize=maxlen)
+            # atexit.register(self._onexit)
         else:
             self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
         self._behavior_id = behavior_id

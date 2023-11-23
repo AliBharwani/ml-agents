@@ -2,15 +2,23 @@
 # Contains an implementation of SAC as described in https://arxiv.org/abs/1801.01290
 # and implemented in https://github.com/hill-a/stable-baselines
 
+from bdb import effective
 from collections import defaultdict
 import copy
 from datetime import datetime
 import threading
-from typing import Dict, cast
+import time
+from typing import Dict, Tuple, cast
 import os
 
+from sympy import E
 
-from mlagents.trainers.buffer import BufferKey
+import torch.multiprocessing as mp
+from mlagents import torch_utils
+from mlagents.trainers.agent_processor import AgentManagerQueue
+
+from mlagents.trainers.buffer import AgentBuffer, BufferKey
+from mlagents.trainers.supertrack import mp_queue
 from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils
 from mlagents.trainers.trajectory import Trajectory
 from mlagents_envs import logging_util
@@ -33,8 +41,6 @@ from mlagents.trainers.settings import TorchSettings, TrainerSettings
 from mlagents.trainers.supertrack.optimizer_torch import SuperTrackPolicyNetwork, TorchSuperTrackOptimizer, SuperTrackSettings
 from torch.profiler import profile, record_function, ProfilerActivity
 from mlagents.torch_utils import torch, default_device
-
-logger = get_logger(__name__)
 
 BUFFER_TRUNCATE_PERCENT = 0.8
 
@@ -99,7 +105,7 @@ class SuperTrackTrainer(RLTrainer):
         self.first_update = True
 
     @timed
-    def _initialize(self):
+    def _initialize(self, torch_settings: TorchSettings) -> None:
         self.optimizer._init_world_model()
         
         self.model_saver.register(self.policy)
@@ -115,7 +121,129 @@ class SuperTrackTrainer(RLTrainer):
             actor_gpu.train()
             self.optimizer.actor_gpu = actor_gpu
             self.optimizer.set_actor_gpu_to_optimizer()
-        
+        if self.trainer_settings.multiprocess_trainer:
+            # This trainer process will just be a consumer of gpu trajectories
+            # CREATE PRODUCER PROCESS
+            self.gpu_batch_queue = mp_queue.TorchQueue(name="gpu_batch_queue", maxsize=4)
+            self.num_steps_processed = mp.Value("i", 0)
+            batch_size_data = (self.wm_window, self.wm_batch_size, self.policy_window, self.policy_batch_size)
+            gpu_batch_producer = mp.Process(
+                target=SuperTrackTrainer.gpu_batch_producer_process,
+                  name="gpu_batch_producer", 
+                  args=(torch_settings, 
+                        self.trajectory_queues[0], 
+                        self.gpu_batch_queue, 
+                        self._stats_reporter, 
+                        self.num_steps_processed, 
+                        self.hyperparameters.buffer_size,
+                        batch_size_data), 
+                  daemon=True)
+            gpu_batch_producer.start()
+
+
+    @staticmethod
+    def gpu_batch_producer_process(torch_settings, traj_queue, gpu_batch_queue, stats_reporter, num_steps_processed, buffer_size, batch_size_data):
+        logging_util.set_log_level(logging_util.INFO)
+        logger = get_logger(__name__)
+        torch_utils.set_torch_config(torch_settings)
+        logger.info(f"gpu_batch_producer_process started on pid {os.getpid()} parent pid {os.getppid()}")
+        update_buffer: AgentBuffer = AgentBuffer()
+        wm_window, wm_batch_size, policy_window, policy_batch_size = batch_size_data   
+        effective_wm_window = wm_window + 1
+        effective_policy_window = policy_window + 1
+        pinned_mem_check = True      
+        try:
+            while True:
+                # read from traj_queue
+                _queried = False
+                num_read = 0
+                num_steps_processed_this_iteration = 0
+                processed_large_number_of_trajectories = traj_queue.qsize() > 150
+                if (processed_large_number_of_trajectories):
+                    print(f"{datetime.now().strftime('%I:%M:%S ')} Large number of trajectories in queue: {traj_queue.qsize()}")
+                for _ in range(traj_queue.qsize()):
+                    _queried = True
+                    try:
+                        traj = traj_queue.get_nowait()
+                        # self._process_trajectory(t)
+                        agent_buffer_trajectory = traj.to_supertrack_agentbuffer()
+                        for st_datum in agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]:
+                            # print("Moving supertrack data on trajectory to GPU")
+                            if pinned_mem_check:
+                                print(f"Trajectory tensors are in pinned memory: {st_datum.sim_char_state.positions.is_pinned()} device: {st_datum.sim_char_state.positions.device}")
+                                pinned_mem_check = False
+                            st_datum.to(default_device())
+                        num_steps_processed_this_iteration += len(traj.steps)
+                        agent_buffer_trajectory.resequence_and_append(
+                           update_buffer, training_length=1
+                        )
+                        num_read += 1
+                    except AgentManagerQueue.Empty:
+                        break
+                if not _queried:
+                    # Yield thread to avoid busy-waiting
+                    time.sleep(0.0001)
+                if (processed_large_number_of_trajectories):
+                    print(f"{datetime.now().strftime('%I:%M:%S ')} Finished processing trajectories in queue, num_read: {num_read}")
+                if num_read > 0:
+                    stats_reporter.add_stat('Avg # Traj Read', num_read, StatsAggregationMethod.AVERAGE)
+
+                # create batch and add to gpu_batch_queue
+                max_data_required = max(effective_wm_window * wm_batch_size, effective_policy_window * policy_batch_size)
+                if (update_buffer.num_experiences - max(effective_wm_window, effective_policy_window) >= max_data_required):
+                    wm_minibatch = update_buffer.supertrack_sample_mini_batch(wm_batch_size, wm_window)
+                    policy_minibatch = update_buffer.supertrack_sample_mini_batch(policy_batch_size, policy_window)
+                    gpu_batch_queue.put((wm_minibatch, policy_minibatch))
+                # Do this after setting up batch queue 
+                num_steps_processed.value += num_steps_processed_this_iteration
+
+                 # Truncate update buffer if neccessary. Truncate more than we need to to avoid truncating
+                # a large buffer at each update.
+                if update_buffer.num_experiences > buffer_size:
+                    with hierarchical_timer("update_buffer.truncate"):
+                        update_buffer.truncate_on_traj_end(
+                            int(buffer_size * BUFFER_TRUNCATE_PERCENT)
+                        )
+                        logger.info(f"Truncated update buffer to {update_buffer.num_experiences} experiences")
+
+        except KeyboardInterrupt:
+            logger.info("gpu_batch_producer_process received KeyboardInterrupt")
+        # finally:
+            # prof.stop()
+            # write_timing_tree(trainer.run_log_path)
+
+    def advance_consumer(self):
+        """
+        Advances the consumer/training part of this trainer
+        return: whether or not the trainer read a batch 
+        """
+        # this would normally happen in super._process_trajectory() but we do it manually here: 
+        num_new_steps_processed = self.num_steps_processed.value
+        if num_new_steps_processed > 0:
+            self._maybe_write_summary(self.get_step + num_new_steps_processed)
+            self._maybe_save_model(self.get_step + num_new_steps_processed)
+            self._increment_step(num_new_steps_processed, self.policy_queues[0].behavior_id)
+            self.num_steps_processed.value = 0
+        _update_occured = False
+        if self.should_still_train:
+            if self._is_ready_update():
+                with hierarchical_timer("_update_policy"):
+                    # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering trainer update policy")
+                    batches = None
+                    try:
+                        batches = self.gpu_batch_queue.get_nowait()
+                    except mp_queue.Empty:
+                        pass
+                    if batches is not None and self._update_policy(batches):
+                        del batches
+                        _update_occured = True
+                        # if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_push("put in policy queue")
+                        for q in self.policy_queues:
+                            # Get policies that correspond to the policy queue in question
+                            q.put(self.get_policy(q.behavior_id))
+                        # if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_pop()
+                    # print(f"{datetime.now().strftime('%I:%M:%S ')} Exiting trainer update policy")
+        return _update_occured
 
 ### FROM OFFPOLICYTRAINER LEVEL
 
@@ -198,6 +326,8 @@ class SuperTrackTrainer(RLTrainer):
         Returns whether or not the trainer has enough elements to run update model
         :return: A boolean corresponding to whether or not _update_policy() can be run
         """
+        if self.trainer_settings.multiprocess_trainer:
+            return self._step >= self.hyperparameters.buffer_init_steps
         return (
             self._has_enough_data_to_train()
             and self._step >= self.hyperparameters.buffer_init_steps
@@ -226,7 +356,7 @@ class SuperTrackTrainer(RLTrainer):
         self.update_steps = int(max(1, self._step / self.steps_per_update))
 
     @timed
-    def _update_policy(self) -> bool:
+    def _update_policy(self, batches: Tuple[torch.Tensor, torch.Tensor] = None) -> bool:
         """
         Uses update_buffer to update the policy. We sample the update_buffer and update
         until the steps_per_update ratio is met.
@@ -244,32 +374,35 @@ class SuperTrackTrainer(RLTrainer):
             buffer = self.update_buffer
             if nsys_profiler_running: torch.cuda.nvtx.range_push(f"iteration {self.update_steps - update_steps_before}")
 
-            if self._has_enough_data_to_train():
-                # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering supertrack_sample_mini_batch")
-                if nsys_profiler_running: torch.cuda.nvtx.range_push("supertrack_sample_mini_batch")
-                world_model_minibatch = buffer.supertrack_sample_mini_batch(self.wm_batch_size,self.wm_window)
+            # if self._has_enough_data_to_train():
+            # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering supertrack_sample_mini_batch")
+            if nsys_profiler_running: torch.cuda.nvtx.range_push("supertrack_sample_mini_batch")
+            if not batches:
+                world_model_minibatch = buffer.supertrack_sample_mini_batch(self.wm_batch_size, self.wm_window)
                 policy_minibatch = buffer.supertrack_sample_mini_batch(self.policy_batch_size, self.policy_window)
-                if nsys_profiler_running: torch.cuda.nvtx.range_pop()
-
-                # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering update_world_model")
-                if nsys_profiler_running: torch.cuda.nvtx.range_push("update_world_model")
-                update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_batch_size, self.wm_window)
-                if nsys_profiler_running: torch.cuda.nvtx.range_pop()
-
-                # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering optimizer update_policy")
-                if nsys_profiler_running: torch.cuda.nvtx.range_push("update_policy")
-                update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window, nsys_profiler_running=True))
-                if nsys_profiler_running: torch.cuda.nvtx.range_pop()
-
-                for stat_name, value in update_stats.items():
-                    batch_update_stats[stat_name].append(value)
-
-                for stat, stat_list in batch_update_stats.items():
-                    self._stats_reporter.add_stat(stat, np.mean(stat_list))
-                self.update_steps += 1
-                has_updated = True
             else:
-                raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
+                world_model_minibatch, policy_minibatch = batches
+            if nsys_profiler_running: torch.cuda.nvtx.range_pop()
+
+            # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering update_world_model")
+            if nsys_profiler_running: torch.cuda.nvtx.range_push("update_world_model")
+            update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_batch_size, self.wm_window)
+            if nsys_profiler_running: torch.cuda.nvtx.range_pop()
+
+            # print(f"{datetime.now().strftime('%I:%M:%S ')} Entering optimizer update_policy")
+            if nsys_profiler_running: torch.cuda.nvtx.range_push("update_policy")
+            update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window, nsys_profiler_running=True))
+            if nsys_profiler_running: torch.cuda.nvtx.range_pop()
+
+            for stat_name, value in update_stats.items():
+                batch_update_stats[stat_name].append(value)
+
+            for stat, stat_list in batch_update_stats.items():
+                self._stats_reporter.add_stat(stat, np.mean(stat_list))
+            self.update_steps += 1
+            has_updated = True
+            # else:
+            #     raise Exception(f"Update policy called with insufficient data in buffer. Buffer has {self.update_buffer.num_experiences} experiences, but needs {max(self.effective_wm_window * self.wm_batch_size, self.effective_policy_window * self.policy_batch_size)} to update")
             if nsys_profiler_running: torch.cuda.nvtx.range_pop()
 
         if has_updated:

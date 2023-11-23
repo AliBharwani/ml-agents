@@ -1,4 +1,5 @@
 
+import atexit
 import sys
 import os
 import threading
@@ -350,10 +351,20 @@ class ConnectionWrapper:
 
 
 class TorchQueue(Queue):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, name="None", **kwargs):
         ctx = multiprocessing.get_context()
         super().__init__(*args, **kwargs, ctx=ctx)
         self._reader: ConnectionWrapper = ConnectionWrapper(self._reader)
         self._writer: ConnectionWrapper = ConnectionWrapper(self._writer)
         self._send = self._writer.send
         self._recv = self._reader.recv
+        self.name = name
+        atexit.register(self._onexit)
+
+
+    def _onexit(self):
+        try: 
+            self._terminate_broken()
+            print(f"Terminated broken queue: {self.name}")
+        except Exception as e:
+            print(f"failed to terminate queue {self.name}: {e}")

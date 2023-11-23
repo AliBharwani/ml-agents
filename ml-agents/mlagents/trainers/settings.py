@@ -653,6 +653,7 @@ class TrainerSettings(ExportableSettings):
     time_horizon: int = 64
     process_trajectory_on_termination : bool = False
     use_pytorch_mp : bool = False
+    multiprocess_trainer : bool = False
     summary_freq: int = 50000
     threaded: bool = False
     self_play: Optional[SelfPlaySettings] = None

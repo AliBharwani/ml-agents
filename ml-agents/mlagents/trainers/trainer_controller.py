@@ -155,7 +155,7 @@ class TrainerController:
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
-                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer, self.torch_settings, self.logger.getEffectiveLevel()), daemon=True, name=f"trainer_process")
+                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer, self.torch_settings, self.logger.getEffectiveLevel()), daemon=False, name=f"trainer_process")
                 stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers,), daemon=True, name=f"stats_reporter_process")
                 self.trainer_processes += [trainer_process, stats_reporter_process]
             else:
@@ -367,13 +367,19 @@ class TrainerController:
         torch_utils.set_torch_config(torch_settings)
         logger.info(f"Trainer process started on pid {os.getpid()} parent pid {os.getppid()}")
         try:
-            trainer._initialize()
+            trainer._initialize(torch_settings)
         except Exception as e:
             print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
         try:
             while True:
                     with hierarchical_timer("trainer_advance"):
-                        trainer.advance()
+                        if trainer.trainer_settings.multiprocess_trainer:
+                            _queried = trainer.advance_consumer()
+                            if not _queried:
+                                # Yield thread to avoid busy-waiting
+                                time.sleep(.0001)
+                        else:
+                            trainer.advance()
         except(KeyboardInterrupt) as ex:
             logger.debug("Trainer process shutting down.")
         except Exception as ex:
