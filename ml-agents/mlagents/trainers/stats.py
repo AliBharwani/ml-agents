@@ -11,6 +11,7 @@ import time
 from threading import RLock
 # from torch.multiprocessing import RLock
 import torch.multiprocessing as mp
+# import multiprocessing as mp
 from mlagents.torch_utils import torch
 from mlagents_envs import logging_util
 from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod

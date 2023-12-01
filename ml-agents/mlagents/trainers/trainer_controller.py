@@ -11,8 +11,10 @@ from typing import Dict, Set, List
 from collections import defaultdict
 from sympy import Q
 import torch.multiprocessing as mp
+# import multiprocessing as mp
 
 import numpy as np
+from mlagents.torch_utils.torch import default_device
 from mlagents.trainers import stats
 from mlagents.trainers.settings import TorchSettings
 from mlagents.trainers.stats import StatsReporter, StatsReporterCommand, StatsReporterMP, StatsSummary, StatsWriter
@@ -167,10 +169,16 @@ class TrainerController:
             )
             self.trainers[brain_name] = trainer
 
+        if trainer.trainer_settings.use_pytorch_mp:
+            # Make sure policy actor is not initialized using CUDA
+            torch_utils.set_torch_config(TorchSettings(device="cpu"))
         policy = trainer.create_policy(
             parsed_behavior_id,
             env_manager.training_behaviors[name_behavior_id],
         )
+        if trainer.trainer_settings.use_pytorch_mp:
+            # Reset
+            torch_utils.set_torch_config(self.torch_settings)
         trainer.torch_settings = self.torch_settings
         trainer.add_policy(parsed_behavior_id, policy)
 
@@ -323,17 +331,24 @@ class TrainerController:
         :return:
         """
         self.kill_trainers = True
-        for trainer in self.trainers.values():
-            for traj_q in trainer.trajectory_queues:
-                traj_q.close()
+        # for trainer in self.trainers.values():
+        #     for traj_q in trainer.trajectory_queues:
+        #         traj_q.close()
         for t in [*self.trainer_threads, *self.trainer_processes]:
             try:
                 t.join(timeout_seconds)
                 self.logger.info(f"Trainer thread/process {t} joined")
+                t.close()
             except Exception as e:
                 self.logger.error(f"Trainer thread {t} threw an exception after {timeout_seconds} seconds")
                 self.logger.exception(e)
-
+            finally:
+                # try:
+                t.terminate()
+                # except ValueError as e:
+                #     self.logger.debug(f"Trainer thread {t} could not be terminated, likely already closed: {e}")
+                # except Exception as e:
+                #     self.logger.exception(f"Trainer thread {t} could not be terminated: {e}")
         # self.logger.debug("Closing trainer processes")
         # for t in self.trainer_processes:
         #     t.close()
@@ -364,7 +379,9 @@ class TrainerController:
         # main process, so we need to set it again.
         logging_util.set_log_level(log_level)
         logger = get_logger(__name__)
+        print(f"Default device: {default_device()}")
         torch_utils.set_torch_config(torch_settings)
+        print(f"Default device: {default_device()}")
         logger.info(f"Trainer process started on pid {os.getpid()} parent pid {os.getppid()}")
         try:
             trainer._initialize(torch_settings)

@@ -75,7 +75,7 @@ def set_torch_config(torch_settings: TorchSettings) -> None:
 
 
 # Initialize to default settings
-set_torch_config(TorchSettings(device=None))
+# set_torch_config(TorchSettings(device=None))
 
 nn = torch.nn
 

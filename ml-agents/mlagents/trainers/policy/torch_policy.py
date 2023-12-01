@@ -58,7 +58,7 @@ class TorchPolicy(Policy):
         )
         if split_on_cpugpu:
             self.actor.to("cpu")
-            self.actor.share_memory()
+            # self.actor.share_memory_()
         else:
             self.actor.to(default_device())
 

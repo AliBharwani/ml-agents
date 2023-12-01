@@ -12,6 +12,7 @@ from collections import defaultdict, Counter
 import queue
 
 from sympy import use
+from mlagents import simple_queue_with_size
 from mlagents.torch_utils import torch
 from mlagents.trainers.supertrack import mp_queue
 from mlagents_envs import logging_util
@@ -315,6 +316,7 @@ class AgentProcessor:
                 )
                 
                 for traj_queue in self._trajectory_queues:
+                    # trajectory.steps = trajectory.steps[:3]
                     traj_queue.put(trajectory)
                 self._experience_buffers[global_agent_id] = []
                 # print(f"Agent {global_agent_id} terminated at: {self._episode_steps.get(global_agent_id, 0)} steps")
@@ -385,7 +387,7 @@ class AgentManagerQueue(Generic[T]):
     def __repr__(self) -> str:
         return self.name or super().__repr__()
 
-    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False, name : str = None):
+    def __init__(self, behavior_id: str, maxlen: int = 0, use_pytorch_mp: bool = False, name : str = None, use_simple_queue : bool = False):
         """
         Initializes an AgentManagerQueue. Note that we can give it a behavior_id so that it can be identified
         separately from an AgentManager.
@@ -393,9 +395,13 @@ class AgentManagerQueue(Generic[T]):
         self.name = name
         self._maxlen: int = maxlen
         self.use_pytorch_mp = use_pytorch_mp
+        self.use_simple_queue = use_simple_queue
 
         if use_pytorch_mp:
-            self._queue = mp_queue.TorchQueue(name=name, maxsize=maxlen)
+            if use_simple_queue:
+                self._queue = simple_queue_with_size.SimpleQueueWithSize(name=name, maxsize=maxlen)
+            else:
+                self._queue = mp_queue.TorchQueue(name=name, maxsize=maxlen)
             # atexit.register(self._onexit)
         else:
             self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
@@ -440,6 +446,10 @@ class AgentManagerQueue(Generic[T]):
         if the queue is empty.
         """
         try:
+            if self.use_simple_queue:
+                if self._queue.empty():
+                    return None
+                return self._queue.get()
             return self._queue.get_nowait()
         except queue.Empty:
             raise self.Empty("The AgentManagerQueue is empty.")
@@ -449,20 +459,23 @@ class AgentManagerQueue(Generic[T]):
 
     def put(self, item: T, block : bool = True) -> None:
         try:
+            if self.use_simple_queue:
+                return self._queue.put(item)
             self._queue.put(item, block=block), 
         except Exception as e:
             logger.error(f"failed to put item in queue: {e}")
-            print(f"failed to put item in queue: {e}")
 
     def close(self):
-        if self.use_pytorch_mp:
+        if self.use_pytorch_mp and not self.use_simple_queue:
             self._queue.close()
     
     def join_thread(self):
-        self._queue.join_thread()
+        if self.use_pytorch_mp and not self.use_simple_queue:
+            self._queue.join_thread()
 
     def cancel_join_thread(self):
-        self._queue.cancel_join_thread()
+        if self.use_pytorch_mp and not self.use_simple_queue:
+            self._queue.cancel_join_thread()
 
 class AgentManager(AgentProcessor):
     """
@@ -484,12 +497,12 @@ class AgentManager(AgentProcessor):
         # trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
         trajectory_queue_len = 1024
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
-            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, name = "trajectory_queue"
+            self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, name = "trajectory_queue",  use_simple_queue=False #use_simple_queue=False
         )
         # NOTE: we make policy queues of infinite length to avoid lockups of the trainers.
         # In the environment manager, we make sure to empty the policy queue before continuing to produce steps.
         self.policy_queue: AgentManagerQueue[Policy] = AgentManagerQueue(
-            self._behavior_id, maxlen=0, use_pytorch_mp=use_pytorch_mp, name = "policy_queue"
+            self._behavior_id, maxlen=0, use_pytorch_mp=use_pytorch_mp, name = "policy_queue", use_simple_queue=True
         )
         self.publish_trajectory_queue(self.trajectory_queue)
 

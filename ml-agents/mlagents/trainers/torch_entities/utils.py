@@ -454,3 +454,31 @@ class ModelUtils:
             torch.min(p_opt_a, p_opt_b), loss_masks
         )
         return policy_loss
+    
+
+    @staticmethod
+    def check_values_near_zero_or_nan(batch):
+        """
+        Check if all values in a batch are near zero or NaN using PyTorch.
+
+        Args:
+        batch (torch.Tensor): A tensor representing the batch.
+
+        Returns:
+        bool: True if all values are near zero or NaN, False otherwise.
+        """
+        # Define a threshold for considering values as 'near zero'
+        threshold = 1e-5
+
+        # Check for values that are near zero (absolute value less than threshold)
+        near_zero = torch.abs(batch) < threshold
+
+        # Check for NaN values
+        nan_values = torch.isnan(batch)
+
+        # Combine the two conditions
+        # A value is valid if it's either near zero or NaN
+        valid_values = torch.logical_or(near_zero, nan_values)
+
+        # Check if all values in the batch satisfy the condition
+        return torch.all(valid_values)

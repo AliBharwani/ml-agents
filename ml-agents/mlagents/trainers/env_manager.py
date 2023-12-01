@@ -115,10 +115,11 @@ class EnvManager(ABC):
             try:
                 # We make sure to empty the policy queue before continuing to produce steps.
                 # This halts the trainers until the policy queue is empty.
-                while True:
+                while not self.agent_managers[brain_name].policy_queue.empty():
                     _policy = self.agent_managers[brain_name].policy_queue.get_nowait()
             except AgentManagerQueue.Empty:
                 if _policy is not None:
+                    logger.info(f"Updating policy for brain {brain_name}")
                     self.set_policy(brain_name, _policy)
             except Exception as e:
                 logger.exception(

@@ -83,9 +83,11 @@ class CharState():
         # self.heights = ModelUtils.to_numpy(self.heights)
         # self.up_dir = ModelUtils.to_numpy(self.up_dir)
     
-    def to(self, device):
+    def to(self, device, clone = False):
         for attr in ['positions', 'rotations', 'velocities', 'rot_velocities', 'heights', 'up_dir']:
             current_attr = getattr(self, attr)
+            # cloned = current_attr.clone()
+            # setattr(self, attr, cloned.to(device))
             setattr(self, attr, current_attr.to(device, non_blocking=True))
             # if torch.is_tensor(current_attr):
 
@@ -113,9 +115,11 @@ class PDTargets():
             if not isinstance(current_attr, np.ndarray):
                 setattr(self, attr, ModelUtils.to_numpy(current_attr))
     
-    def to(self, device):
+    def to(self, device, clone = False):
         for attr in ['rotations', 'rot_velocities']:
             current_attr = getattr(self, attr)
+            # cloned = current_attr.clone()
+            # setattr(self, attr, cloned.to(device))
             # if torch.is_tensor(current_attr):
             setattr(self, attr, current_attr.to(device, non_blocking=True))
 
@@ -133,10 +137,10 @@ class SuperTrackDataField():
         self.pre_targets.to_numpy()
         self.post_targets.to_numpy()
 
-    def to(self, device):
+    def to(self, device, clone = False):
         for attr in ['sim_char_state', 'kin_char_state', 'pre_targets', 'post_targets']:
             current_attr = getattr(self, attr)
-            current_attr.to(device)
+            current_attr.to(device, clone=clone)
     
 class SupertrackUtils:
 

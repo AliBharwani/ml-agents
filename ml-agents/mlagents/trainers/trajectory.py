@@ -144,7 +144,7 @@ class Trajectory(NamedTuple):
     agent_id: str
     behavior_id: str
 
-    def to_supertrack_agentbuffer(self) -> AgentBuffer:
+    def to_supertrack_agentbuffer(self, pinned_mem_check = False) -> AgentBuffer:
         """
         Converts a Trajectory to an AgentBuffer compatible with SuperTrack
         :param trajectory: A Trajectory
@@ -162,6 +162,8 @@ class Trajectory(NamedTuple):
             # agent_buffer_trajectory[BufferKey.CONTINUOUS_ACTION].append(
             #     exp.action.continuous
             # )
+            if step == 0 and pinned_mem_check:
+                print(f"Super track data is in pinned memory: {exp.supertrack_data.sim_char_state.positions.is_pinned()}")
             agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA].append(exp.supertrack_data)
             agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ].append(step)
             agent_buffer_trajectory[BufferKey.TRAJ_LEN].append(
