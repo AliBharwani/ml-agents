@@ -2,7 +2,6 @@
 import math
 import threading
 import traceback
-from turtle import st
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
@@ -525,7 +524,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN]
         policy_input = inputs[0]
         if not inputs_already_formatted:
-            supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input, pin_memory=True)
+            pin_memory = policy_input.device == 'cpu'
+            supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input, pin_memory=pin_memory)
             policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
         if policy_input.shape[-1] != POLICY_INPUT_LEN:
             raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")

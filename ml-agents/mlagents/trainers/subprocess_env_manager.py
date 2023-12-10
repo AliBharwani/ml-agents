@@ -13,9 +13,8 @@ from mlagents_envs.exception import (
     UnityEnvironmentException,
     UnityCommunicatorStoppedException,
 )
-# from multiprocessing import Process, Pipe, Queue
 from torch.multiprocessing import Process, Pipe, Queue
-
+from mlagents.torch_utils import torch
 # from multiprocessing.connection import Connection
 from queue import Empty as EmptyQueueException
 from mlagents_envs.base_env import BaseEnv, BehaviorName, BehaviorSpec
@@ -303,7 +302,6 @@ class SubprocessEnvManager(EnvManager):
         run_options: RunOptions,
     ) -> UnityEnvWorker:
         parent_conn, child_conn = Pipe()
-
         # Need to use cloudpickle for the env factory function since function objects aren't picklable
         # on Windows as of Python 3.6.
         pickled_env_factory = cloudpickle.dumps(env_factory)
@@ -442,6 +440,7 @@ class SubprocessEnvManager(EnvManager):
             try:
                 while True:
                     step: EnvironmentResponse = self.step_queue.get_nowait()
+                    print(f"Got step: {step}")
                     if step.cmd == EnvironmentCommand.ENV_EXITED:
                         # If even one env exits try to restart all envs that failed.
                         self._restart_failed_workers(step)

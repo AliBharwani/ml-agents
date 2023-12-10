@@ -9,9 +9,9 @@ import trace
 import traceback
 from typing import Dict, Set, List
 from collections import defaultdict
+from mlagents_envs.base_env import BehaviorSpec
 from sympy import Q
 import torch.multiprocessing as mp
-# import multiprocessing as mp
 
 import numpy as np
 from mlagents.torch_utils.torch import default_device
@@ -138,6 +138,7 @@ class TrainerController:
     ) -> None:
 
         parsed_behavior_id = BehaviorIdentifiers.from_name_behavior_id(name_behavior_id)
+        behavior_spec = env_manager.training_behaviors[name_behavior_id]
         brain_name = parsed_behavior_id.brain_name
         trainerthread = None
         trainer_process = None
@@ -157,7 +158,10 @@ class TrainerController:
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
-                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func, args=(trainer, self.torch_settings, self.logger.getEffectiveLevel()), daemon=False, name=f"trainer_process")
+                trainer_process = mp.Process(target=TrainerController.trainer_process_update_func,
+                                            args=(trainer, self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
+                                            daemon=False, 
+                                            name=f"trainer_process")
                 stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers,), daemon=True, name=f"stats_reporter_process")
                 self.trainer_processes += [trainer_process, stats_reporter_process]
             else:
@@ -169,17 +173,18 @@ class TrainerController:
             )
             self.trainers[brain_name] = trainer
 
-        if trainer.trainer_settings.use_pytorch_mp:
+        # if trainer.trainer_settings.use_pytorch_mp:
             # Make sure policy actor is not initialized using CUDA
-            torch_utils.set_torch_config(TorchSettings(device="cpu"))
+            # torch_utils.set_torch_config(TorchSettings(device="cpu"))
         policy = trainer.create_policy(
             parsed_behavior_id,
-            env_manager.training_behaviors[name_behavior_id],
+            behavior_spec,
         )
-        if trainer.trainer_settings.use_pytorch_mp:
+        # if trainer.trainer_settings.use_pytorch_mp:
             # Reset
-            torch_utils.set_torch_config(self.torch_settings)
+            # torch_utils.set_torch_config(self.torch_settings)
         trainer.torch_settings = self.torch_settings
+        # if not trainer.multiprocess:
         trainer.add_policy(parsed_behavior_id, policy)
 
         agent_manager = AgentManager(
@@ -207,7 +212,7 @@ class TrainerController:
                 stats_reporter_process.start()
         elif trainer.get_trainer_name() == "supertrack": 
             try:
-                trainer._initialize()
+                trainer._initialize(self.torch_settings)
             except Exception as e:
                 print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
             
@@ -374,7 +379,7 @@ class TrainerController:
                 trainer.advance()
 
     @staticmethod
-    def trainer_process_update_func(trainer: Trainer, torch_settings: TorchSettings,  log_level: int = logging_util.INFO) -> None:
+    def trainer_process_update_func(trainer: Trainer, torch_settings: TorchSettings,  behavior_spec : BehaviorSpec, log_level: int = logging_util.INFO) -> None:
         # Set log level. On some platforms, the logger isn't common with the
         # main process, so we need to set it again.
         logging_util.set_log_level(log_level)

@@ -1,7 +1,7 @@
 # # Unity ML-Agents Toolkit
 from mlagents import torch_utils
 import yaml
-
+from mlagents.torch_utils import torch
 import os
 import numpy as np
 import json
@@ -24,7 +24,6 @@ from mlagents.trainers.cli_utils import parser
 from mlagents_envs.environment import UnityEnvironment
 from mlagents.trainers.settings import RunOptions
 import torch.multiprocessing as mp
-
 from mlagents.trainers.training_status import GlobalTrainingStatus
 from mlagents_envs.base_env import BaseEnv
 from mlagents.trainers.subprocess_env_manager import SubprocessEnvManager
@@ -68,6 +67,8 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
     :param options: parsed command line arguments
     """
     with hierarchical_timer("run_training.setup"):
+        # torch.multiprocessing.set_start_method('spawn')
+        torch.multiprocessing.set_start_method('forkserver')
         torch_utils.set_torch_config(options.torch_settings)
         checkpoint_settings = options.checkpoint_settings
         env_settings = options.env_settings
@@ -109,8 +110,8 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
             env_settings.env_args,
             os.path.abspath(run_logs_dir),  # Unity environment requires absolute path
         )
-        # env_manager = simple_env_manager.SimpleEnvManager(env_factory(0, []), options)
-        env_manager = SubprocessEnvManager(env_factory, options, env_settings.num_envs)
+        env_manager = simple_env_manager.SimpleEnvManager(env_factory(0, []), options)
+        # env_manager = SubprocessEnvManager(env_factory, options, env_settings.num_envs)
         env_parameter_manager = EnvironmentParameterManager(
             options.environment_parameters, run_seed, restore=checkpoint_settings.resume
         )

@@ -1,5 +1,4 @@
 import atexit
-import multiprocessing
 import os
 # import multiprocessing
 import pdb
@@ -401,18 +400,13 @@ class AgentManagerQueue(Generic[T]):
             if use_simple_queue:
                 self._queue = simple_queue_with_size.SimpleQueueWithSize(name=name, maxsize=maxlen)
             else:
-                self._queue = mp_queue.TorchQueue(name=name, maxsize=maxlen)
-            # atexit.register(self._onexit)
+                if sys.platform == 'win32':
+                    self._queue = mp_queue.TorchQueue(name=name, maxsize=maxlen)
+                else:
+                    self._queue = torch.multiprocessing.Queue(maxsize=maxlen)
         else:
             self._queue: queue.Queue = queue.Queue(maxsize=maxlen)
         self._behavior_id = behavior_id
-
-    def _onexit(self):
-        try: 
-            self._queue._terminate_broken()
-            print(f"Terminated broken queue: {self.name}")
-        except Exception as e:
-            print(f"failed to terminate queue {self.name}: {e}")
 
     @property
     def maxlen(self):

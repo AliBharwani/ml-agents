@@ -1,5 +1,4 @@
 import pdb
-from tkinter import SEL
 from typing import Any, Dict, List
 import numpy as np
 from mlagents.torch_utils import torch, default_device
@@ -58,6 +57,7 @@ class TorchPolicy(Policy):
         )
         if split_on_cpugpu:
             self.actor.to("cpu")
+            self.actor.share_memory()
             # self.actor.share_memory_()
         else:
             self.actor.to(default_device())

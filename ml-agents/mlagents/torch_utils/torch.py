@@ -34,7 +34,6 @@ assert_torch_installed()
 import torch  # noqa I201
 
 
-torch.set_num_threads(cpu_utils.get_num_threads_to_use())
 os.environ["KMP_BLOCKTIME"] = "0"
 
 

@@ -14,7 +14,6 @@ import os
 from sympy import E
 
 import torch.multiprocessing as mp
-# import multiprocessing as mp
 
 from mlagents import simple_queue_with_size, torch_utils
 from mlagents.trainers.agent_processor import AgentManagerQueue
