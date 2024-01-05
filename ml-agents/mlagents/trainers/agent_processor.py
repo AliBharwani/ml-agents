@@ -318,7 +318,7 @@ class AgentProcessor:
                     # trajectory.steps = trajectory.steps[:3]
                     traj_queue.put(trajectory)
                 self._experience_buffers[global_agent_id] = []
-                # print(f"Agent {global_agent_id} terminated at: {self._episode_steps.get(global_agent_id, 0)} steps")
+                print(f"Agent {global_agent_id} terminated at: {self._episode_steps.get(global_agent_id, 0)} steps")
             if terminated:
                 # Record episode length.
                 self._stats_reporter.add_stat(
@@ -392,6 +392,8 @@ class AgentManagerQueue(Generic[T]):
         separately from an AgentManager.
         """
         self.name = name
+        if self.name == "trajectory_queue":
+            print("Initializing trajectory queue")
         self._maxlen: int = maxlen
         self.use_pytorch_mp = use_pytorch_mp
         self.use_simple_queue = use_simple_queue
@@ -453,6 +455,8 @@ class AgentManagerQueue(Generic[T]):
 
     def put(self, item: T, block : bool = True) -> None:
         try:
+            if self.name == "trajectory_queue":
+                print("Putting in trajectory queue")
             if self.use_simple_queue:
                 return self._queue.put(item)
             self._queue.put(item, block=block), 

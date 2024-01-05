@@ -527,6 +527,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             pin_memory = policy_input.device == 'cpu'
             supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input, pin_memory=pin_memory)
             policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
+            print(f'policy_input.device: {policy_input.device}')
         if policy_input.shape[-1] != POLICY_INPUT_LEN:
             raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
         encoding = self.network_body(policy_input)
@@ -537,8 +538,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
-        if supertrack_data is not None:
-            run_out["supertrack_data"] = supertrack_data
+        if supertrack_data is not None:1
         if return_means:
             run_out["means"] = means
         run_out["log_probs"] = log_probs

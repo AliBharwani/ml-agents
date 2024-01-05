@@ -473,9 +473,9 @@ class SuperTrackTrainer(RLTrainer):
         """
         super()._process_trajectory(trajectory)
         agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-        # if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
-        #     # self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
-        #     SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory, device=default_device())
+        if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
+            # self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
+            SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory, device=default_device())
         # else:
             # Bring CPU tensors to GPU 
         for st_datum in agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]:

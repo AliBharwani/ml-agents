@@ -440,7 +440,6 @@ class SubprocessEnvManager(EnvManager):
             try:
                 while True:
                     step: EnvironmentResponse = self.step_queue.get_nowait()
-                    print(f"Got step: {step}")
                     if step.cmd == EnvironmentCommand.ENV_EXITED:
                         # If even one env exits try to restart all envs that failed.
                         self._restart_failed_workers(step)

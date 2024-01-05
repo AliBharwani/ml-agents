@@ -384,9 +384,7 @@ class TrainerController:
         # main process, so we need to set it again.
         logging_util.set_log_level(log_level)
         logger = get_logger(__name__)
-        print(f"Default device: {default_device()}")
         torch_utils.set_torch_config(torch_settings)
-        print(f"Default device: {default_device()}")
         logger.info(f"Trainer process started on pid {os.getpid()} parent pid {os.getppid()}")
         try:
             trainer._initialize(torch_settings)

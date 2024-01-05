@@ -110,8 +110,8 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
             env_settings.env_args,
             os.path.abspath(run_logs_dir),  # Unity environment requires absolute path
         )
-        env_manager = simple_env_manager.SimpleEnvManager(env_factory(0, []), options)
-        # env_manager = SubprocessEnvManager(env_factory, options, env_settings.num_envs)
+        # env_manager = simple_env_manager.SimpleEnvManager(env_factory(0, []), options)
+        env_manager = SubprocessEnvManager(env_factory, options, env_settings.num_envs)
         env_parameter_manager = EnvironmentParameterManager(
             options.environment_parameters, run_seed, restore=checkpoint_settings.resume
         )
