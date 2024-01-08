@@ -191,6 +191,7 @@ def worker(
 
         while True:
             req: EnvironmentRequest = parent_conn.recv()
+            print(f"Received command: {req.cmd}")
             if req.cmd == EnvironmentCommand.STEP:
                 all_action_info = req.payload
                 for brain_name, action_info in all_action_info.items():
@@ -207,11 +208,12 @@ def worker(
                 step_response = StepResponse(
                     all_step_result, get_timer_root(), env_stats
                 )
-                step_queue.put(
-                    EnvironmentResponse(
-                        EnvironmentCommand.STEP, worker_id, step_response
+                with hierarchical_timer('step_queue.put'):
+                    step_queue.put(
+                        EnvironmentResponse(
+                            EnvironmentCommand.STEP, worker_id, step_response
+                        )
                     )
-                )
                 reset_timers()
             elif req.cmd == EnvironmentCommand.BEHAVIOR_SPECS:
                 _send_response(EnvironmentCommand.BEHAVIOR_SPECS, env.behavior_specs)
@@ -321,12 +323,14 @@ class SubprocessEnvManager(EnvManager):
         child_process.start()
         return UnityEnvWorker(child_process, worker_id, parent_conn)
 
+    @timed
     def _queue_steps(self) -> None:
         for env_worker in self.env_workers:
             if not env_worker.waiting:
                 env_action_info = self._take_step(env_worker.previous_step)
                 env_worker.previous_all_action_info = env_action_info
                 env_worker.send(EnvironmentCommand.STEP, env_action_info)
+                print("Sent env worker action info")
                 env_worker.waiting = True
 
     def _restart_failed_workers(self, first_failure: EnvironmentResponse) -> None:
@@ -428,6 +432,7 @@ class SubprocessEnvManager(EnvManager):
             filter(_filter, self.recent_restart_timestamps[worker_id])
         )
 
+    @timed
     def _step(self) -> List[EnvironmentStep]:
         # Queue steps for any workers which aren't in the "waiting" state.
         self._queue_steps()
@@ -439,7 +444,9 @@ class SubprocessEnvManager(EnvManager):
         while len(worker_steps) < 1:
             try:
                 while True:
-                    step: EnvironmentResponse = self.step_queue.get_nowait()
+                    with hierarchical_timer('step queue get_nowait'):
+                        step: EnvironmentResponse = self.step_queue.get_nowait()
+                    print(f"Step command : {step.cmd}")
                     if step.cmd == EnvironmentCommand.ENV_EXITED:
                         # If even one env exits try to restart all envs that failed.
                         self._restart_failed_workers(step)
@@ -531,6 +538,7 @@ class SubprocessEnvManager(EnvManager):
                     )
         self.step_queue.join_thread()
 
+    @timed
     def _postprocess_steps(
         self, env_steps: List[EnvironmentResponse]
     ) -> List[EnvironmentStep]:
@@ -565,6 +573,7 @@ class SubprocessEnvManager(EnvManager):
         all_action_info: Dict[str, ActionInfo] = {}
         for brain_name, step_tuple in last_step.current_all_step_result.items():
             if brain_name in self.policies:
+                get_action_timer = time.time()
                 all_action_info[brain_name] = self.policies[brain_name].get_action(
                     step_tuple[0], last_step.worker_id
                 )

@@ -158,6 +158,9 @@ class TrainerController:
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
+                # trainer_process = mp.Process(target=TrainerController.dummy_func, 
+                #                             daemon=True, 
+                #                             name=f"trainer_process")
                 trainer_process = mp.Process(target=TrainerController.trainer_process_update_func,
                                             args=(trainer, self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
                                             daemon=False, 
@@ -202,7 +205,7 @@ class TrainerController:
 
         trainer.publish_policy_queue(agent_manager.policy_queue)
         trainer.subscribe_trajectory_queue(agent_manager.trajectory_queue)
-
+        self.DEBUG_traj_q = agent_manager.trajectory_queue
         # Only start new trainers
         if trainerthread is not None or trainer.multiprocess:
             if trainerthread is not None:
@@ -310,6 +313,12 @@ class TrainerController:
             if not (trainer.threaded or trainer.multiprocess):
                 with hierarchical_timer("trainer_advance"):
                     trainer.advance()
+        
+        # for _ in range(self.DEBUG_traj_q.qsize()):
+        #     try:
+        #         t = self.DEBUG_traj_q.get_nowait()
+        #     except AgentManagerQueue.Empty:
+        #         break
         self.first_update = False
         return num_steps
 
@@ -393,13 +402,13 @@ class TrainerController:
         try:
             while True:
                     with hierarchical_timer("trainer_advance"):
-                        if trainer.trainer_settings.multiprocess_trainer:
-                            _queried = trainer.advance_consumer()
-                            if not _queried:
-                                # Yield thread to avoid busy-waiting
-                                time.sleep(.0001)
-                        else:
-                            trainer.advance()
+                        # if trainer.trainer_settings.multiprocess_trainer:
+                        #     _queried = trainer.advance_consumer()
+                        #     if not _queried:
+                        #         # Yield thread to avoid busy-waiting
+                        #         time.sleep(.0001)
+                        # else:
+                        trainer.advance()
         except(KeyboardInterrupt) as ex:
             logger.debug("Trainer process shutting down.")
         except Exception as ex:
@@ -410,3 +419,9 @@ class TrainerController:
             logger.debug("Saving model")
             trainer.save_model()
             logger.info("Trainer process closing.")
+
+    @staticmethod
+    def dummy_func() -> None:
+        print(f"dummy_func process started on pid {os.getpid()} parent pid {os.getppid()}")
+        while True:
+            time.sleep(1)

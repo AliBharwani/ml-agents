@@ -507,7 +507,7 @@ class SuperTrackTrainer(RLTrainer):
             self.trainer_settings.policy_network_settings,
             actor_cls,
             actor_kwargs,
-            split_on_cpugpu=self.multiprocess,
+            # split_on_cpugpu=self.multiprocess,
         )
         # self.maybe_load_replay_buffer()
         return policy
