@@ -39,8 +39,8 @@ class TorchPolicy(Policy):
         :param actor_kwargs: Keyword args for the Actor class
         """
         super().__init__(seed, behavior_spec, network_settings)
-        self.split_on_cpugpu = split_on_cpugpu
-        device = "cpu" if split_on_cpugpu else None
+        self.split_on_cpugpu = split_on_cpugpu 
+        device = "cpu" if self.split_on_cpugpu else None
         self.global_step = (
             GlobalSteps(device=device)
         )  # could be much simpler if TorchPolicy is nn.Module
@@ -55,10 +55,9 @@ class TorchPolicy(Policy):
             action_spec=behavior_spec.action_spec,
             **actor_kwargs,
         )
-        if split_on_cpugpu:
+        if self.split_on_cpugpu:
             self.actor.to("cpu")
             self.actor.share_memory()
-            # self.actor.share_memory_()
         else:
             self.actor.to(default_device())
 
