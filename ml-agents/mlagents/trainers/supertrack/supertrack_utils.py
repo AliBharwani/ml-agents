@@ -74,15 +74,7 @@ class CharState():
             current_attr = getattr(self, attr)
             if not isinstance(current_attr, np.ndarray):
                 setattr(self, attr, ModelUtils.to_numpy(current_attr))
-        # if isinstance(self.positions, np.ndarray):
-        #     return
-        # self.positions = ModelUtils.to_numpy(self.positions)
-        # self.rotations = ModelUtils.to_numpy(self.rotations)
-        # self.velocities = ModelUtils.to_numpy(self.velocities)
-        # self.rot_velocities = ModelUtils.to_numpy(self.rot_velocities)
-        # self.heights = ModelUtils.to_numpy(self.heights)
-        # self.up_dir = ModelUtils.to_numpy(self.up_dir)
-    
+                
     def to(self, device, clone = False):
         for attr in ['positions', 'rotations', 'velocities', 'rot_velocities', 'heights', 'up_dir']:
             current_attr = getattr(self, attr)

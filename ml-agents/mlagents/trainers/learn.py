@@ -67,8 +67,8 @@ def run_training(run_seed: int, options: RunOptions, num_areas: int) -> None:
     :param options: parsed command line arguments
     """
     with hierarchical_timer("run_training.setup"):
-        # torch.multiprocessing.set_start_method('spawn')
-        torch.multiprocessing.set_start_method('forkserver')
+        torch.multiprocessing.set_start_method('spawn')
+        # torch.multiprocessing.set_start_method('forkserver')
         torch_utils.set_torch_config(options.torch_settings)
         checkpoint_settings = options.checkpoint_settings
         env_settings = options.env_settings

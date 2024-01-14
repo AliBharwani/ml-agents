@@ -286,20 +286,21 @@ class RLTrainer(Trainer):
                 )
                 self._has_warned_group_rewards = True
                 
-    def advance(self) -> None:
+    def advance(self, profiling_enabled = False) -> None:
         """
         Steps the trainer, taking in trajectories and updates if ready.
         Will block and wait briefly if there are no trajectories.
         """
-        # if self.torch_settings.profile and self.was_prev_ready_for_update and self.profiler_state == ProfilerState.NOT_STARTED:
-        #     print(f"Starting cudart on update_step: {self.update_steps}")
-        #     torch.cuda.cudart().cudaProfilerStart()
-        #     self.profiler_state = ProfilerState.RUNNING
         
         # if self.profiler_state == ProfilerState.RUNNING and self.update_steps > 5:
-        #     torch.cuda.cudart().cudaProfilerStop()
         #     print(f"Stopping cudart on update_step: {self.update_steps}")
         #     self.profiler_state = ProfilerState.STOPPED
+        #     torch.cuda.cudart().cudaProfilerStop()
+
+        if profiling_enabled and self.profiler_state == ProfilerState.NOT_STARTED and self.update_steps > 10:
+            print(f"Starting cudart on update_step: {self.update_steps}")
+            torch.cuda.cudart().cudaProfilerStart()
+            self.profiler_state = ProfilerState.RUNNING
 
         if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_push(f"process_trajectory")
         processed_large_number_of_trajectories = False 

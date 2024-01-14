@@ -104,16 +104,16 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
         st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
-        num_issue = 0
-        num_zero = 0
-        num_nan = 0
-        for st_datum in st_data:
-            tensor = st_datum.sim_char_state.positions
-            num_zero += 1 if torch.count_nonzero(tensor).item() == 0 else 0
-            num_nan += 1 if torch.isnan(tensor).any() else 0
-        for st_datum in st_data:
-            num_issue += 1 if ModelUtils.check_values_near_zero_or_nan(st_datum.sim_char_state.positions) else 0
-        print(f"=========== TRAINER/OPTIMZER THREAD: World model batch has {num_zero} zero and {num_nan} nan out of {len(st_data)} possible") 
+        # num_issue = 0
+        # num_zero = 0
+        # num_nan = 0
+        # for st_datum in st_data:
+        #     tensor = st_datum.sim_char_state.positions
+        #     num_zero += 1 if torch.count_nonzero(tensor).item() == 0 else 0
+        #     num_nan += 1 if torch.isnan(tensor).any() else 0
+        # for st_datum in st_data:
+        #     num_issue += 1 if ModelUtils.check_values_near_zero_or_nan(st_datum.sim_char_state.positions) else 0
+        # print(f"=========== TRAINER/OPTIMZER THREAD: World model batch has {num_zero} zero and {num_nan} nan out of {len(st_data)} possible") 
         sim_char_tensors = [st_datum.sim_char_state.as_tensors(default_device()) for st_datum in st_data]
         positions, rotations, vels, rot_vels, heights, up_dir = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
         
@@ -238,9 +238,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         if nsys_profiler_running: torch.cuda.nvtx.range_push("gen tensors")
         # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
         st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
-        sim_char_tensors = [st_datum.sim_char_state.as_tensors(default_device()) for st_datum in st_data]
-        kin_char_tensors = [st_datum.kin_char_state.as_tensors(default_device()) for st_datum in st_data]
-        kin_pre_targets = [st_datum.pre_targets.as_tensors(default_device()) for st_datum in st_data]
+        sim_char_tensors = [st_datum.sim_char_state.values() for st_datum in st_data]
+        kin_char_tensors = [st_datum.kin_char_state.values() for st_datum in st_data]
+        kin_pre_targets = [st_datum.pre_targets.values() for st_datum in st_data]
         pre_target_rots, pre_target_vels =  self._convert_pdtargets_to_usable_tensors(kin_pre_targets, batch_size, window_size, True)
         if nsys_profiler_running: torch.cuda.nvtx.range_pop()
 

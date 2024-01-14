@@ -9,8 +9,10 @@ import trace
 import traceback
 from typing import Dict, Set, List
 from collections import defaultdict
+from mlagents.trainers.trainer.rl_trainer import ProfilerState
 from mlagents_envs.base_env import BehaviorSpec
 from sympy import Q
+import torch
 import torch.multiprocessing as mp
 
 import numpy as np
@@ -163,7 +165,7 @@ class TrainerController:
                 #                             name=f"trainer_process")
                 trainer_process = mp.Process(target=TrainerController.trainer_process_update_func,
                                             args=(trainer, self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
-                                            daemon=False, 
+                                            daemon=True, 
                                             name=f"trainer_process")
                 stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers,), daemon=True, name=f"stats_reporter_process")
                 self.trainer_processes += [trainer_process, stats_reporter_process]
@@ -194,6 +196,7 @@ class TrainerController:
             policy,
             name_behavior_id,
             trainer.stats_reporter,
+            self.torch_settings,
             trainer.parameters.time_horizon,
             threaded=trainer.threaded,
             process_trajectory_on_termination=trainer.parameters.process_trajectory_on_termination,
@@ -205,7 +208,7 @@ class TrainerController:
 
         trainer.publish_policy_queue(agent_manager.policy_queue)
         trainer.subscribe_trajectory_queue(agent_manager.trajectory_queue)
-        self.DEBUG_traj_q = agent_manager.trajectory_queue
+        self.DEBUG_ONLY_trajectory_queue = agent_manager.trajectory_queue
         # Only start new trainers
         if trainerthread is not None or trainer.multiprocess:
             if trainerthread is not None:
@@ -311,14 +314,19 @@ class TrainerController:
 
         for trainer in self.trainers.values():
             if not (trainer.threaded or trainer.multiprocess):
-                with hierarchical_timer("trainer_advance"):
-                    trainer.advance()
-        
-        # for _ in range(self.DEBUG_traj_q.qsize()):
-        #     try:
-        #         t = self.DEBUG_traj_q.get_nowait()
-        #     except AgentManagerQueue.Empty:
-        #         break
+                # For nsys profiling only, we want to profile how it performs reading a large number of trajectories
+                # So advance if we're not in profile mode 
+                # If we are in profile mode, only advance if we less than the number of warmup steps (5) or we have enough trajectories to profile
+                if not self.torch_settings.profile or (trainer.update_steps < 5 or self.DEBUG_ONLY_trajectory_queue.qsize() > 100):
+                    if self.torch_settings.profile and trainer.update_steps >= 5:
+                        env_manager.close() # we don't care to profile the env manager
+                    with hierarchical_timer("trainer_advance"):
+                        trainer.advance(profiling_enabled = self.torch_settings.profile)
+                if self.torch_settings.profile and trainer.profiler_state == ProfilerState.RUNNING:
+                    print(f"Stopping cudart on update_step: {trainer.update_steps}")
+                    trainer.profiler_state = ProfilerState.STOPPED
+                    torch.cuda.cudart().cudaProfilerStop()
+
         self.first_update = False
         return num_steps
 
@@ -356,9 +364,9 @@ class TrainerController:
             except Exception as e:
                 self.logger.error(f"Trainer thread {t} threw an exception after {timeout_seconds} seconds")
                 self.logger.exception(e)
-            finally:
+            # finally:
                 # try:
-                t.terminate()
+                # t.terminate()
                 # except ValueError as e:
                 #     self.logger.debug(f"Trainer thread {t} could not be terminated, likely already closed: {e}")
                 # except Exception as e:

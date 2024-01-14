@@ -5,6 +5,7 @@ import pdb
 import sys
 import time
 import traceback
+from mlagents.trainers.settings import TorchSettings
 import numpy as np
 from typing import List, Dict, TypeVar, Generic, Tuple, Any, Union
 from collections import defaultdict, Counter
@@ -484,6 +485,7 @@ class AgentManager(AgentProcessor):
         policy: Policy,
         behavior_id: str,
         stats_reporter: StatsReporter,
+        torch_settings : TorchSettings,
         max_trajectory_length: int = sys.maxsize,
         threaded: bool = True,
         process_trajectory_on_termination: bool = False,
@@ -491,7 +493,9 @@ class AgentManager(AgentProcessor):
     ):
         super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
         # trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
-        trajectory_queue_len = 1024
+        # For nsys profiling we want to allow infinite trajectory queue size and start profiling 
+        # after hitting a certain number of trajectories dynamically 
+        trajectory_queue_len = 0 if torch_settings.profile else 1024
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
             self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, name = "trajectory_queue",  use_simple_queue=False #use_simple_queue=False
         )
