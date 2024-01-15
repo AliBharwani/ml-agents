@@ -1,21 +1,17 @@
-from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Tuple, Union, cast
-import os
-import functools
-import pdb
-from mlagents.torch_utils import torch, nn, default_device
+import enum
+from typing import List, Tuple, Union
+from mlagents.torch_utils import torch
 
 from mlagents.trainers.buffer import AgentBuffer, AgentBufferField, BufferKey, ObservationKeyPrefix
-
 
 import pytorch3d.transforms as pyt
 
 import numpy as np
 from mlagents.trainers.torch_entities.utils import ModelUtils
 
-from mlagents_envs.timers import hierarchical_timer, timed
 
 TOTAL_OBS_LEN = 720
 CHAR_STATE_LEN = 259
@@ -23,31 +19,43 @@ NUM_BONES = 17
 NUM_T_BONES = 16 # Number of bones that have PD Motors (T = targets)
 ENTRIES_PER_BONE = 13
 POLICY_INPUT_LEN = 518
+MINIMUM_TRAJ_LEN = 48
 
 
-class Quat():
-    w : int; x : int; y : int; z : int
-    def __init__(self, w, x, y, z):
-        self.w = w
-        self.x = x
-        self.y = y
-        self.z = z
 
-    def inv(self) -> 'Quat':
-        return Quat(self.w, -self.x, -self.y, -self.z)
-    
+class PDTargetPrefix(enum.Enum):
+    PRE = "pre"
+    POST = "post"
 
-    def vec(self):
-        """
-        Return the imaginary part of the quaternion
-        """
-        return np.asarray([self.x, self.y, self.z])
-    
+class PDTargetSuffix(enum.Enum):
+    ROT = "rot"
+    RVEL = "rvel"
+
+class CharTypePrefix(enum.Enum):
+    SIM = "sim"
+    KIN = "kin"
+
+class CharTypeSuffix(enum.Enum):
+    POSITION = "position"
+    ROTATION = "rotation"
+    VEL = "vel"
+    RVEL = "rvel"
+    HEIGHT = "height"
+    UP_DIR = "up_dir"
         
 class Bone(Enum):
     ROOT = 0
     HIP = 1
     SPINE = 2
+
+@contextmanager
+def nsys_profiler(name: str, profiler_running: bool):
+    if profiler_running: torch.cuda.nvtx.range_push(name)
+    try:
+        yield
+    finally:
+        if profiler_running: torch.cuda.nvtx.range_pop()
+    
 
 @dataclass
 class CharState():
@@ -74,15 +82,11 @@ class CharState():
             current_attr = getattr(self, attr)
             if not isinstance(current_attr, np.ndarray):
                 setattr(self, attr, ModelUtils.to_numpy(current_attr))
-                
-    def to(self, device, clone = False):
+
+    def to(self, device):
         for attr in ['positions', 'rotations', 'velocities', 'rot_velocities', 'heights', 'up_dir']:
             current_attr = getattr(self, attr)
-            # cloned = current_attr.clone()
-            # setattr(self, attr, cloned.to(device))
             setattr(self, attr, current_attr.to(device, non_blocking=True))
-            # if torch.is_tensor(current_attr):
-
 
     
 @dataclass
@@ -107,12 +111,9 @@ class PDTargets():
             if not isinstance(current_attr, np.ndarray):
                 setattr(self, attr, ModelUtils.to_numpy(current_attr))
     
-    def to(self, device, clone = False):
+    def to(self, device):
         for attr in ['rotations', 'rot_velocities']:
             current_attr = getattr(self, attr)
-            # cloned = current_attr.clone()
-            # setattr(self, attr, cloned.to(device))
-            # if torch.is_tensor(current_attr):
             setattr(self, attr, current_attr.to(device, non_blocking=True))
 
 
@@ -129,11 +130,12 @@ class SuperTrackDataField():
         self.pre_targets.to_numpy()
         self.post_targets.to_numpy()
 
-    def to(self, device, clone = False):
+    def to(self, device):
         for attr in ['sim_char_state', 'kin_char_state', 'pre_targets', 'post_targets']:
             current_attr = getattr(self, attr)
-            current_attr.to(device, clone=clone)
-    
+            current_attr.to(device)
+
+
 class SupertrackUtils:
 
     @staticmethod
@@ -309,11 +311,9 @@ class SupertrackUtils:
                 post_targets=post_targets[i]) for i in range(B)]
     
     @staticmethod
-    def parse_supertrack_data_field(inputs: List[Union[torch.tensor, np.ndarray]], pin_memory: bool = False, device = None, use_tensor=None) -> AgentBuffer:
-        if len(inputs) != 1:
-            raise Exception(f"SupertrackUtils.parse_supertrack_data_field expected inputs to be of len 1 (data), got {len(inputs)}")
-        use_tensor = torch.is_tensor(inputs) if use_tensor is None else use_tensor
-        obs = inputs[0]
+    def parse_supertrack_data_field(obs: Union[torch.tensor, np.ndarray], pin_memory: bool = False, device = None, use_tensor=None, return_as_keylist = False) -> AgentBuffer:
+        if use_tensor is None:
+            use_tensor = torch.is_tensor(obs)
         idx = 0
         sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         # Extract kin char state
@@ -324,29 +324,38 @@ class SupertrackUtils:
         post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         if idx != TOTAL_OBS_LEN:
             raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
-        return SuperTrackDataField(
-            sim_char_state=sim_char_state, 
-            kin_char_state=kin_char_state,
-            pre_targets=pre_targets,
-            post_targets=post_targets)
+        if not return_as_keylist:
+            return SuperTrackDataField(
+                sim_char_state=sim_char_state, 
+                kin_char_state=kin_char_state,
+                pre_targets=pre_targets,
+                post_targets=post_targets)
+        return {
+            (PDTargetPrefix.PRE, PDTargetSuffix.ROT) : pre_targets.rotations,
+            (PDTargetPrefix.PRE, PDTargetSuffix.RVEL) : pre_targets.rot_velocities,
+            (PDTargetPrefix.POST, PDTargetSuffix.ROT) : post_targets.rotations,
+            (PDTargetPrefix.POST, PDTargetSuffix.RVEL) : post_targets.rot_velocities,
+            **SupertrackUtils._st_charstate_keylist_helper(CharTypePrefix.KIN, kin_char_state),
+            **SupertrackUtils._st_charstate_keylist_helper(CharTypePrefix.SIM, sim_char_state),
+        }
+    
+    def _st_charstate_keylist_helper(prefix, char_state):
+        attr_suffx_list = [('positions', CharTypeSuffix.POSITION), ('rotations', CharTypeSuffix.ROTATION), ('velocities', CharTypeSuffix.VEL), ('rot_velocities', CharTypeSuffix.RVEL), ('heights', CharTypeSuffix.HEIGHT), ('up_dir', CharTypeSuffix.UP_DIR)]
+        return {(prefix, suffix): getattr(char_state, attr) for attr,suffix in attr_suffx_list}
     
 
     @staticmethod
     def add_supertrack_data_field_OLD(agent_buffer_trajectory: AgentBuffer, pin_memory: bool = False, device = None) -> AgentBuffer:
         supertrack_data = AgentBufferField()
-        # s_pos = 
         for i in range(agent_buffer_trajectory.num_experiences):
             obs = agent_buffer_trajectory[(ObservationKeyPrefix.OBSERVATION, 0)][i]
             if (len(obs) != TOTAL_OBS_LEN):
                 raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
             # print(f"Obs at idx {agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ][i]} : {obs}")
-            st_datum = SupertrackUtils.parse_supertrack_data_field([obs], pin_memory=pin_memory, device=device, use_tensor=True)
+            st_datum = SupertrackUtils.parse_supertrack_data_field(obs, pin_memory=pin_memory, device=device, use_tensor=True)
             supertrack_data.append(st_datum)
 
         agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA] = supertrack_data
-
-        # agent_buffer_trajectory['s_pos'] 
-
     
     @staticmethod
     def split_world_model_output(x: torch.Tensor) -> (torch.Tensor, torch.Tensor):
@@ -383,7 +392,6 @@ class SupertrackUtils:
     
 
     @staticmethod
-    @timed
     def local(cur_pos: torch.Tensor, # shape [batch_size, num_bones, 3]
             cur_rots: torch.Tensor, # shape [batch_size, num_bones, 4]
             cur_vels: torch.Tensor,   # shape [batch_size, num_bones, 3]
@@ -394,24 +402,17 @@ class SupertrackUtils:
             unzip_to_batchsize: bool = True,
             ): 
         B = cur_pos.shape[0] # batch_size
-        with hierarchical_timer("root_pos"):
-            root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
-        with hierarchical_timer("inv_root_rots"):
-            inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
-        with hierarchical_timer("local_pos"):
-            local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
-        with hierarchical_timer("local_rots"):
-            local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_t_bones, 4]
-        with hierarchical_timer("rots_as_twoaxis"):
-            if rots_as_twoaxis:
-                return_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
-            else:
-                return_rots = local_rots
+        root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
+        inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
+        local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
+        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_t_bones, 4]
+        if rots_as_twoaxis:
+            return_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
+        else:
+            return_rots = local_rots
         # two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
-        with hierarchical_timer("local_vels"):
-            local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
-        with hierarchical_timer("local_rot_vels"):
-            local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
+        local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
+        local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
 
         return_tensors = [local_pos, return_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]

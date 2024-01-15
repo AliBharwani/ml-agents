@@ -289,7 +289,6 @@ def hierarchical_timer(name: str, timer_stack: TimerStack = None) -> Generator:
         timer_stack.pop()
 
 
-
 # This is used to ensure the signature of the decorated function is preserved
 # See also https://github.com/python/mypy/issues/3157
 FuncT = TypeVar("FuncT", bound=Callable[..., Any])

@@ -43,6 +43,18 @@ class BufferKey(enum.Enum):
     IDX_IN_TRAJ = "idx_in_traj"
     TRAJ_LEN = "traj_len"
     SUPERTRACK_DATA = "supertrack_data"
+    PDTARGET_ROT = "pdtarget_rot"
+    PDTARGET_RVEL = "pdtarget_rvel"
+    K_POSITION = "k_position"
+    K_ROTATION = "k_rotation"
+    K_VEL = "k_vel"
+    K_RVEL = "k_rvel"
+    K_HEIGHT = "k_height"
+    S_POSITION = "s_position"
+    S_ROTATION = "s_rotation"
+    S_VEL = "s_vel"
+    S_RVEL = "s_rvel"
+    S_HEIGHT = "s_height"
 
     ADVANTAGES = "advantages"
     DISCOUNTED_RETURNS = "discounted_returns"
@@ -571,4 +583,3 @@ class AgentBuffer(MutableMapping):
             return len(next(iter(self.values())))
         else:
             return 0
-()

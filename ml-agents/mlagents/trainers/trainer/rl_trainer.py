@@ -8,6 +8,7 @@ from collections import defaultdict
 import abc
 import time
 import attr
+from mlagents.trainers.supertrack.supertrack_utils import nsys_profiler
 import numpy as np
 from mlagents.torch_utils import torch
 from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
@@ -25,14 +26,12 @@ from mlagents.trainers.trainer import Trainer
 from mlagents.trainers.torch_entities.components.reward_providers.base_reward_provider import (
     BaseRewardProvider,
 )
-from mlagents_envs.timers import hierarchical_timer
 from mlagents.trainers.model_saver.torch_model_saver import TorchModelSaver
 from mlagents.trainers.agent_processor import AgentManagerQueue
 from mlagents.trainers.trajectory import Trajectory
 from mlagents.trainers.settings import TrainerSettings
 from mlagents.trainers.stats import StatsPropertyType
 from mlagents.trainers.model_saver.model_saver import BaseModelSaver
-from torch.profiler import profile, record_function, ProfilerActivity
 
 
 logger = get_logger(__name__)
@@ -302,9 +301,8 @@ class RLTrainer(Trainer):
             torch.cuda.cudart().cudaProfilerStart()
             self.profiler_state = ProfilerState.RUNNING
 
-        if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_push(f"process_trajectory")
         processed_large_number_of_trajectories = False 
-        with hierarchical_timer("process_trajectory"):
+        with nsys_profiler("process_trajectory", self.profiler_state == ProfilerState.RUNNING):
             for traj_queue in self.trajectory_queues:
                 # We grab at most the maximum length of the queue.
                 # This ensures that even if the queue is being filled faster than it is
@@ -327,26 +325,20 @@ class RLTrainer(Trainer):
                     time.sleep(0.0001)
                 if num_read > 0:
                     self.stats_reporter.add_stat('Avg # Traj Read', num_read, StatsAggregationMethod.AVERAGE)
-        if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_pop()
+
         if (processed_large_number_of_trajectories):
             print(f"{datetime.now().strftime('%I:%M:%S ')} Finished processing trajectories in queue, num_read: {num_read}")
-        if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_push(f"_update_policy")
-        if self.should_still_train:
-            if self._is_ready_update():
-                # if not self.was_prev_ready_for_update and self.profiler_state == ProfilerState.NOT_STARTED:
-                #     self.was_prev_ready_for_update = True
-                #     return
-                with hierarchical_timer("_update_policy"):
+
+        with nsys_profiler("_update_policy", self.profiler_state == ProfilerState.RUNNING):
+            if self.should_still_train:
+                if self._is_ready_update():
                     print(f"{datetime.now().strftime('%I:%M:%S ')} Entering trainer update policy")
                     if self._update_policy():
-                        if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_push("put in policy queue")
                         for q in self.policy_queues:
                             # Get policies that correspond to the policy queue in question
                             q.put(self.get_policy(q.behavior_id))
-                        if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_pop()
                     print(f"{datetime.now().strftime('%I:%M:%S ')} Exiting trainer update policy")
 
-        if self.profiler_state == ProfilerState.RUNNING: torch.cuda.nvtx.range_pop()
 
 class ProfilerState(enum.Enum):
     NOT_STARTED = "not_started"
