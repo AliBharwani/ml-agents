@@ -401,7 +401,11 @@ class SupertrackUtils:
         root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
         inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
         local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
-        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :]) # shape [batch_size, num_t_bones, 4]
+        # Have to clone quat rots to avoid 
+        # RuntimeError: Output 0 of UnbindBackward0 is a view and its base or another view of its base has been modified inplace. 
+        # This view is the output of a function that returns multiple views. Such functions do not allow the output views to be
+        # modified inplace. You should replace the inplace operation by an out-of-place one
+        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :].clone()) # shape [batch_size, num_t_bones, 4]
         if rots_as_twoaxis:
             return_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
         else:

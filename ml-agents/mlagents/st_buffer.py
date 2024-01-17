@@ -169,7 +169,7 @@ class STBuffer(MutableMapping):
         return True
 
 
-    def sample_mini_batch(self, batch_size: int, raw_window_size: int, DEBUG_start_idxes, key_list: List[STBufferKey] = None) -> "STBuffer":
+    def sample_mini_batch(self, batch_size: int, raw_window_size: int, key_list: List[STBufferKey] = None, normalize_quat = True) -> "STBuffer":
         """
         Creates a mini-batch
         """
@@ -186,9 +186,7 @@ class STBuffer(MutableMapping):
         # after the last start idx 
         high = (buff_len - window_size) // window_size
         start_idxes = torch.randint(0, high, (batch_size,)) * window_size
-        start_idxes = torch.from_numpy(DEBUG_start_idxes).to(device=default_device())
-
-
+        # start_idxes = torch.from_numpy(DEBUG_start_idxes).to(device=default_device())
         # Check if any of the start_idxes falls within the hole
         if self.hole is not None:
             # If any start_idx falls within the hole, have it use the the traj immediately behind it
@@ -216,6 +214,10 @@ class STBuffer(MutableMapping):
             # Use advanced indexing to extract slices
             # We want to gather along the first dimension of self[key]
             mini_batch[key] = self[key][indices]  # Shape: (batch_size, window_size, 17, 3)
+            if normalize_quat and ((key[0] == PDTargetPrefix.POST or key[0] == PDTargetPrefix.PRE) and key[1] == PDTargetSuffix.ROT):
+                mini_batch[key] = SupertrackUtils.normalize_quat(self[key][indices])
+            else:
+                mini_batch[key] = self[key][indices] 
 
         return mini_batch
     
