@@ -7,8 +7,8 @@ import pdb
 from typing import BinaryIO, DefaultDict, List, Tuple, Union
 from mlagents.torch_utils import torch
 from mlagents.trainers.supertrack.supertrack_utils import MINIMUM_TRAJ_LEN, NUM_BONES, TOTAL_OBS_LEN, SupertrackUtils, CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix
+from mlagents.trainers.trajectory import Trajectory
 
-import numpy as np
 import h5py
 
 from mlagents.torch_utils import torch, default_device
@@ -23,8 +23,7 @@ class SuffixToNumValues:
         PDTargetSuffix.RVEL: 3,
         CharTypeSuffix.POSITION : 3,
         CharTypeSuffix.ROTATION : 4,
-        CharTypeSuffix.VEL : 3,                # print(f"Assinging {key[0].value} , {key[1].value} the following shape: {(buffer_size, *STBuffer.suffix_to_tensor_shape(key[1]))}")
-
+        CharTypeSuffix.VEL : 3,               
         CharTypeSuffix.RVEL : 3,
         CharTypeSuffix.HEIGHT : 1,
         # These should not be accessed from the table
@@ -58,7 +57,7 @@ class STBuffer(MutableMapping):
                 self[key] = torch.empty(buffer_size, *STBuffer.suffix_to_tensor_shape(key[1]))
                 # print(f"Assinging {key[0].value} , {key[1].value} the following shape: {(buffer_size, *STBuffer.suffix_to_tensor_shape(key[1]))}")
             else: 
-                self[key] = torch.zeros(buffer_size)
+                self[key] = torch.zeros(buffer_size, dtype=torch.int32)
         # Num values in the buffer
         self._cur_idx = 0
         self._buffer_size = buffer_size
@@ -204,7 +203,8 @@ class STBuffer(MutableMapping):
         # Ensure it's not negative. Could also subtract with a mask instead, same thing
         num_steps_to_rewind = torch.clamp(num_steps_to_rewind, min=0)  
         start_idxes -= num_steps_to_rewind
-
+        # print(f"start_idxes dtype: {start_idxes.dtype} self[BufferKey.TRAJ_LEN] dtype: {self[BufferKey.TRAJ_LEN].dtype} ")
+        # print(f"num_steps_remaning dtype: {num_steps_remaning.dtype} num_steps_to_rewind dtype: {num_steps_to_rewind.dtype} ")
         window_range = torch.arange(window_size)  # Shape: (window_size,)
         # Expand and offset the range for each start index
         # Reshape start_idxes to (batch_size, 1) and add window_range (broadcasting)
@@ -254,8 +254,7 @@ class STBuffer(MutableMapping):
 
     def add_supertrack_data(
         self,
-        # supertrack_buffer,
-        trajectory,
+        trajectory : Trajectory,
     ) -> None:
         """
         Appends this AgentBuffer to target_buffer
@@ -284,17 +283,6 @@ class STBuffer(MutableMapping):
                 self.hole = [self.effective_idx, end_idx]
             else: 
                 self.hole = None
-        
-        # for i in range (supertrack_buffer.num_experiences):
-        #     self[BufferKey.IDX_IN_TRAJ][self.effective_idx] = supertrack_buffer[BufferKey.IDX_IN_TRAJ][i]
-        #     self[BufferKey.TRAJ_LEN][self.effective_idx] = supertrack_buffer[BufferKey.TRAJ_LEN][i]
-        #     obs = supertrack_buffer[(ObservationKeyPrefix.OBSERVATION, 0)][i]
-        #     if (len(obs) != TOTAL_OBS_LEN):
-        #         raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
-        #     st_keylist = SupertrackUtils.parse_supertrack_data_field(obs, device=default_device(), return_as_keylist=True)
-        #     for key, value in st_keylist.items():
-        #         self[key][self.effective_idx] = value
-        #     self._cur_idx += 1 
 
     @property
     def effective_idx(self):

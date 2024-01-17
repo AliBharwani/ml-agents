@@ -1,32 +1,13 @@
-# ## ML-Agent Learning (SAC)
-# Contains an implementation of SAC as described in https://arxiv.org/abs/1801.01290
-# and implemented in https://github.com/hill-a/stable-baselines
-
-from bdb import effective
 from collections import defaultdict
 import copy
 from datetime import datetime
 import itertools
-import threading
-import time
 from typing import Dict, Tuple, cast
 import os
-from mlagents import st_buffer
 from mlagents.st_buffer import CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix, STBuffer
 
-from sympy import E
-
-import torch.multiprocessing as mp
-
-from mlagents import simple_queue_with_size, torch_utils
-from mlagents.trainers.agent_processor import AgentManagerQueue
-
-from mlagents.trainers.buffer import AgentBuffer, BufferKey
-from mlagents.trainers.supertrack import mp_queue
-from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils, nsys_profiler
-from mlagents.trainers.torch_entities.utils import ModelUtils
+from mlagents.trainers.supertrack.supertrack_utils import nsys_profiler
 from mlagents.trainers.trajectory import Trajectory
-from mlagents_envs import logging_util
 
 from mlagents_envs.base_env import BehaviorSpec
 
@@ -44,7 +25,6 @@ from mlagents.trainers.trainer.rl_trainer import ProfilerState, RLTrainer
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
 from mlagents.trainers.settings import TorchSettings, TrainerSettings
 from mlagents.trainers.supertrack.optimizer_torch import SuperTrackPolicyNetwork, TorchSuperTrackOptimizer, SuperTrackSettings
-from torch.profiler import profile, record_function, ProfilerActivity
 from mlagents.torch_utils import torch, default_device
 
 logger = get_logger(__name__)
@@ -111,7 +91,6 @@ class SuperTrackTrainer(RLTrainer):
 
         self.update_buffer : STBuffer = STBuffer(buffer_size=self.hyperparameters.buffer_size)
 
-    # @timed
     def _initialize(self, torch_settings: TorchSettings) -> None:
         self.optimizer._init_world_model()
         
@@ -130,8 +109,6 @@ class SuperTrackTrainer(RLTrainer):
             actor_gpu.train()
             self.optimizer.actor_gpu = actor_gpu
             self.optimizer.set_actor_gpu_to_optimizer()
-
-### FROM OFFPOLICYTRAINER LEVEL
 
     def _checkpoint(self) -> ModelCheckpoint:
         """
@@ -264,7 +241,7 @@ class SuperTrackTrainer(RLTrainer):
             with nsys_profiler(f"iteration {self.update_steps - update_steps_before}", nsys_profiler_running):
                 with nsys_profiler("sample_mini_batch", nsys_profiler_running):
                     if not batches:
-                        wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), (PDTargetPrefix.POST, PDTargetSuffix.ROT)]
+                        wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
                         world_model_minibatch = buffer.sample_mini_batch(self.wm_batch_size, self.wm_window, key_list=wm_keylist)
                         policy_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product([PDTargetPrefix.PRE], PDTargetSuffix)]
                         policy_minibatch = buffer.sample_mini_batch(self.policy_batch_size, self.policy_window, key_list=policy_keylist)
@@ -297,23 +274,6 @@ class SuperTrackTrainer(RLTrainer):
                 
         return has_updated
 
-### FROM SAC TRAINER LEVEL
-    @timed
-    def _process_trajectory_OLD(self, trajectory: Trajectory) -> None:
-        """
-        Takes a trajectory and processes it, putting it into the replay buffer.
-        """
-        super()._process_trajectory(trajectory)
-        agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-        if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
-            # self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
-            SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory, device=default_device())
-        # else:
-            # Bring CPU tensors to GPU 
-        for st_datum in agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]:
-            # print("Moving supertrack data on trajectory to GPU")
-            st_datum.to(default_device())
-        self._append_to_update_buffer(agent_buffer_trajectory)
 
     def _process_trajectory(self, trajectory: Trajectory) -> None:
         """

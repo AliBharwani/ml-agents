@@ -1,27 +1,16 @@
-
-import math
-import threading
-import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 from mlagents.st_buffer import CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix, STBuffer
-
-import numpy as np
-from mlagents import torch_utils
-
 
 from mlagents.trainers.settings import NetworkSettings, OffPolicyHyperparamSettings
 import attr
 import pdb
 from mlagents.torch_utils import torch, nn, default_device
 import pytorch3d.transforms as pyt
-from mlagents.trainers.buffer import AgentBuffer, BufferKey
 from mlagents.trainers.supertrack.supertrack_utils import  NUM_T_BONES, POLICY_INPUT_LEN, SupertrackUtils, nsys_profiler
 from mlagents.trainers.supertrack.world_model import WorldModelNetwork
 from mlagents.trainers.torch_entities.action_model import ActionModel
-from mlagents.trainers.torch_entities.encoders import VectorInput
 from mlagents.trainers.torch_entities.layers import LinearEncoder
-from mlagents.trainers.torch_entities.networks import Actor, NetworkBody
-from mlagents.trainers.torch_entities.utils import ModelUtils
+from mlagents.trainers.torch_entities.networks import Actor
 from mlagents_envs.base_env import ActionSpec, ObservationSpec
 
 from mlagents_envs.timers import timed
@@ -89,7 +78,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         except Exception as e:
             print(f"Exception in check_wm_layernorm at {print_on_true}: {e}") 
 
-    @timed
     def update_world_model(self, batch: STBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
         if self.first_update:
             print("WORLD MODEL DEVICE: ", next(self._world_model.parameters()).device)
@@ -97,32 +85,16 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             if self.split_actor_devices:
                 cur_actor = self.actor_gpu
             print("POLICY DEVICE: ", next(cur_actor.parameters()).device)
-        # window_size = raw_window_size + 1
-        # if (batch.num_experiences // window_size != batch_size):
-        #         raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size}, received {batch.num_experiences}")
-
-        # sim_char_tensors = [data.as_tensors() for data in batch[BufferKey.SUPERTRACK_DATA].sim_char_state]
-        # st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
-        # num_issue = 0
-        # num_zero = 0
-        # num_nan = 0
-        # for st_datum in st_data:
-        #     tensor = st_datum.sim_char_state.positions
-        #     num_zero += 1 if torch.count_nonzero(tensor).item() == 0 else 0
-        #     num_nan += 1 if torch.isnan(tensor).any() else 0
-        # for st_datum in st_data:
-        #     num_issue += 1 if ModelUtils.check_values_near_zero_or_nan(st_datum.sim_char_state.positions) else 0
-        # print(f"=========== TRAINER/OPTIMZER THREAD: World model batch has {num_zero} zero and {num_nan} nan out of {len(st_data)} possible") 
-        # sim_char_tensors = [st_datum.sim_char_state.as_tensors(default_device()) for st_datum in st_data]
-        # positions, rotations, vels, rot_vels, heights, up_dir = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
+            
         suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
         positions, rotations, vels, rot_vels, heights, up_dir = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]
-        kin_rot_t = batch[(PDTargetPrefix.POST, PDTargetSuffix.ROT)]
+        kin_rot_t, kin_rvel_t = batch[(PDTargetPrefix.POST, PDTargetSuffix.ROT)], batch[(PDTargetPrefix.POST, PDTargetSuffix.RVEL)]
+        # remove root bone from PDTargets 
+        kin_rot_t, kin_rvel_t = kin_rot_t[:, :, 1:, :], kin_rvel_t[:, :, 1:, :] 
         if self.first_update:
             for var, var_name in zip([positions, rotations, vels, rot_vels, heights, up_dir, kin_rot_t], ['positions', 'rotations', 'vels', 'rot_vels', 'heights', 'up_dir', 'kin_rot_t']):
                 print(f"{var_name} shape: {var.shape}")
-        # kin_targets = [st_datum.post_targets.as_tensors(default_device()) for st_datum in st_data]
-        # kin_rot_t, kin_rvel_t = self._convert_pdtargets_to_usable_tensors(kin_targets, batch_size, window_size, True)
+
         kin_rot_t =  pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(kin_rot_t))
 
         cur_pos = positions[:, 0, ...]
@@ -169,7 +141,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.first_update = False
         return update_stats
 
-    @timed
     def char_state_loss(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
         # We want every loss to give roughly equal contribution
         # to do this, we make sure that, eg, w_pos_loss * pos_loss = total_loss / 4
@@ -234,11 +205,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*self.dtime) , rots)
         return pos, rots, vels, rvels
         
-    @timed
-    def update_policy(self, batch: AgentBuffer, batch_size: int, raw_window_size: int, nsys_profiler_running: bool = False) -> Dict[str, float]: 
-        window_size = raw_window_size + 1
-        if (batch.num_experiences // window_size != batch_size):
-                raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size} = {window_size*batch_size}, received {batch.num_experiences}, diff: {batch.num_experiences - window_size*batch_size}")
+    def update_policy(self, batch: STBuffer, batch_size: int, raw_window_size: int, nsys_profiler_running: bool = False) -> Dict[str, float]: 
+        # window_size = raw_window_size + 1
+        # if (batch.num_experiences // window_size != batch_size):
+        #         raise Exception(f"Unexpected update size - expected len of batch to be {window_size} * {batch_size} = {window_size*batch_size}, received {batch.num_experiences}, diff: {batch.num_experiences - window_size*batch_size}")
 
         # with nsys_profiler("gen tensors", nsys_profiler_running):
         #     st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
@@ -255,7 +225,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         s_pos, s_rots, s_vels, s_rvels, s_h, s_up = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]
         k_pos, k_rots, k_vels, k_rvels, k_h, k_up = [batch[(CharTypePrefix.KIN, suffix)] for suffix in suffixes]
         pre_target_rots, pre_target_vels =  batch[(PDTargetPrefix.PRE, PDTargetSuffix.ROT)],  batch[(PDTargetPrefix.PRE, PDTargetSuffix.RVEL)]
-
+        # Remove root bone from PDTargets 
+        pre_target_rots, pre_target_vels = pre_target_rots[:, :, 1:, :], pre_target_vels[:, :, 1:, :]
         # with nsys_profiler("clone / detach", nsys_profiler_running):
         #     cur_spos = s_pos[:, 0, ...].clone().detach()
         #     cur_srots = s_rots[:, 0, ...].clone().detach()
@@ -458,9 +429,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             init_near_zero=network_settings.init_near_zero,
         )
 
-    def update_normalization(self, buffer: AgentBuffer) -> None:
-        pass # Not needed because we use layernorm
-
     @property
     def memory_size(self) -> int:
         return self.network_body.memory_size
@@ -549,3 +517,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["entropy"] = entropies
 
         return action, run_out, None
+    
+
+    def update_normalization(self, buffer) -> None:
+        pass # Not needed because we use layernorm
+

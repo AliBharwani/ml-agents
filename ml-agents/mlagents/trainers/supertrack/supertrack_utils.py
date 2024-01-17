@@ -21,8 +21,6 @@ ENTRIES_PER_BONE = 13
 POLICY_INPUT_LEN = 518
 MINIMUM_TRAJ_LEN = 48
 
-
-
 class PDTargetPrefix(enum.Enum):
     PRE = "pre"
     POST = "post"
@@ -179,8 +177,6 @@ class SupertrackUtils:
             velocities: torch.Tensor = torch.zeros((NUM_BONES, 3), device=device, pin_memory=pin_memory)
             rot_velocities: torch.Tensor = torch.zeros((NUM_BONES, 3), device=device, pin_memory=pin_memory)
             heights: torch.Tensor = torch.zeros(NUM_BONES, device=device, pin_memory=pin_memory)
-            if type(obs) is np.ndarray:
-                obs = torch.as_tensor(np.asanyarray(obs), device=device, dtype=torch.float32)
         else:
             positions: np.ndarray = np.zeros((NUM_BONES, 3))
             rotations: np.ndarray = np.zeros((NUM_BONES, 4))
@@ -274,8 +270,6 @@ class SupertrackUtils:
                 device = obs.device
             rotations = torch.zeros((NUM_BONES, 4), device=device, pin_memory=pin_memory, dtype=torch.float32)
             rot_velocities = torch.zeros((NUM_BONES, 3), device=device, pin_memory=pin_memory, dtype=torch.float32)
-            if type(obs) is np.ndarray:
-                obs = torch.as_tensor(np.asanyarray(obs), device=device, dtype=torch.float32)
         else:
             rotations = np.zeros((NUM_BONES, 4))
             rot_velocities = np.zeros((NUM_BONES, 3))
@@ -314,6 +308,8 @@ class SupertrackUtils:
     def parse_supertrack_data_field(obs: Union[torch.tensor, np.ndarray], pin_memory: bool = False, device = None, use_tensor=None, return_as_keylist = False) -> AgentBuffer:
         if use_tensor is None:
             use_tensor = torch.is_tensor(obs)
+        elif use_tensor and type(obs) is np.ndarray:
+            obs = torch.as_tensor(np.asanyarray(obs), device=device, dtype=torch.float32)
         idx = 0
         sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         # Extract kin char state
@@ -343,19 +339,6 @@ class SupertrackUtils:
         attr_suffx_list = [('positions', CharTypeSuffix.POSITION), ('rotations', CharTypeSuffix.ROTATION), ('velocities', CharTypeSuffix.VEL), ('rot_velocities', CharTypeSuffix.RVEL), ('heights', CharTypeSuffix.HEIGHT), ('up_dir', CharTypeSuffix.UP_DIR)]
         return {(prefix, suffix): getattr(char_state, attr) for attr,suffix in attr_suffx_list}
     
-
-    @staticmethod
-    def add_supertrack_data_field_OLD(agent_buffer_trajectory: AgentBuffer, pin_memory: bool = False, device = None) -> AgentBuffer:
-        supertrack_data = AgentBufferField()
-        for i in range(agent_buffer_trajectory.num_experiences):
-            obs = agent_buffer_trajectory[(ObservationKeyPrefix.OBSERVATION, 0)][i]
-            if (len(obs) != TOTAL_OBS_LEN):
-                raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
-            # print(f"Obs at idx {agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ][i]} : {obs}")
-            st_datum = SupertrackUtils.parse_supertrack_data_field(obs, pin_memory=pin_memory, device=device, use_tensor=True)
-            supertrack_data.append(st_datum)
-
-        agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA] = supertrack_data
     
     @staticmethod
     def split_world_model_output(x: torch.Tensor) -> (torch.Tensor, torch.Tensor):
