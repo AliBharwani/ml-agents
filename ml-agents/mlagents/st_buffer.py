@@ -169,7 +169,7 @@ class STBuffer(MutableMapping):
         return True
 
 
-    def sample_mini_batch(self, batch_size: int, raw_window_size: int, key_list: List[STBufferKey] = None) -> "STBuffer":
+    def sample_mini_batch(self, batch_size: int, raw_window_size: int, DEBUG_start_idxes, key_list: List[STBufferKey] = None) -> "STBuffer":
         """
         Creates a mini-batch
         """
@@ -186,6 +186,9 @@ class STBuffer(MutableMapping):
         # after the last start idx 
         high = (buff_len - window_size) // window_size
         start_idxes = torch.randint(0, high, (batch_size,)) * window_size
+        start_idxes = torch.from_numpy(DEBUG_start_idxes).to(device=default_device())
+
+
         # Check if any of the start_idxes falls within the hole
         if self.hole is not None:
             # If any start_idx falls within the hole, have it use the the traj immediately behind it

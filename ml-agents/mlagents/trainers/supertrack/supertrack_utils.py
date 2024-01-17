@@ -335,6 +335,19 @@ class SupertrackUtils:
             **SupertrackUtils._st_charstate_keylist_helper(CharTypePrefix.SIM, sim_char_state),
         }
     
+    @staticmethod
+    def add_supertrack_data_field_OLD(agent_buffer_trajectory: AgentBuffer, pin_memory: bool = False, device = None) -> AgentBuffer:
+        supertrack_data = AgentBufferField()
+        # s_pos = 
+        for i in range(agent_buffer_trajectory.num_experiences):
+            obs = agent_buffer_trajectory[(ObservationKeyPrefix.OBSERVATION, 0)][i]
+            if (len(obs) != TOTAL_OBS_LEN):
+                raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
+            # print(f"Obs at idx {agent_buffer_trajectory[BufferKey.IDX_IN_TRAJ][i]} : {obs}")
+            st_datum = SupertrackUtils.parse_supertrack_data_field(obs, pin_memory=pin_memory, device=device, use_tensor=True)
+            supertrack_data.append(st_datum)
+        agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA] = supertrack_data
+           
     def _st_charstate_keylist_helper(prefix, char_state):
         attr_suffx_list = [('positions', CharTypeSuffix.POSITION), ('rotations', CharTypeSuffix.ROTATION), ('velocities', CharTypeSuffix.VEL), ('rot_velocities', CharTypeSuffix.RVEL), ('heights', CharTypeSuffix.HEIGHT), ('up_dir', CharTypeSuffix.UP_DIR)]
         return {(prefix, suffix): getattr(char_state, attr) for attr,suffix in attr_suffx_list}

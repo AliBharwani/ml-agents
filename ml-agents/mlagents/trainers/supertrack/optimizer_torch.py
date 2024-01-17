@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 from mlagents.st_buffer import CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix, STBuffer
+from mlagents.trainers.buffer import AgentBuffer, BufferKey
 
 from mlagents.trainers.settings import NetworkSettings, OffPolicyHyperparamSettings
 import attr
@@ -78,13 +79,83 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         except Exception as e:
             print(f"Exception in check_wm_layernorm at {print_on_true}: {e}") 
 
-    def update_world_model(self, batch: STBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
+    def _DEBUG_assert_batch_equivalence(self, batch, st_batch, batch_size: int, window_size: int):
+         
+        st_data = [batch[BufferKey.SUPERTRACK_DATA][i] for i in range(batch.num_experiences)]
+        sim_char_tensors = [st_datum.sim_char_state.as_tensors(default_device()) for st_datum in st_data]
+        positions, rotations, vels, rot_vels, heights, up_dir = self._convert_to_usable_tensors(sim_char_tensors, batch_size, window_size)
+        
+        kin_targets = [st_datum.post_targets.as_tensors(default_device()) for st_datum in st_data]
+        kin_rot_t, kin_rvel_t = self._convert_pdtargets_to_usable_tensors(kin_targets, batch_size, window_size, True)
+        # kin_rot_t =  pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(kin_rot_t))
+
+
+        suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
+        st_positions, st_rotations, st_vels, st_rot_vels, st_heights, st_up_dir = [st_batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]
+        st_kin_rot_t, st_kin_rvel_t = st_batch[(PDTargetPrefix.POST, PDTargetSuffix.ROT)], st_batch[(PDTargetPrefix.POST, PDTargetSuffix.RVEL)]
+        # remove root bone from PDTargets 
+        st_kin_rot_t, st_kin_rvel_t = st_kin_rot_t[:, :, 1:, :], st_kin_rvel_t[:, :, 1:, :] 
+
+        def unravel_index(
+            indices: torch.LongTensor,
+            shape: Tuple[int, ...],
+        ) -> torch.LongTensor:
+            shape = torch.tensor(shape)
+            indices = indices % shape.prod()  # prevent out-of-bounds indices
+
+            coord = torch.zeros(indices.size() + shape.size(), dtype=int)
+
+            for i, dim in enumerate(reversed(shape)):
+                coord[..., i] = indices % dim
+                indices = indices // dim
+
+            return coord.flip(-1)
+
+
+        vals = [positions, rotations, vels, rot_vels, heights, up_dir, kin_rot_t, kin_rvel_t]
+        st_vals = [st_positions, st_rotations, st_vels, st_rot_vels, st_heights, st_up_dir, st_kin_rot_t, st_kin_rvel_t]
+        names = ['positions', 'rotations', 'vels', 'rot_vels', 'heights', 'up_dir', 'kin_rot_t', 'kin_rvel_t']
+        def check(val1, val2, name):
+            if (val1.shape != val2.shape):
+                raise Exception(f"{name} has shape {val1.shape} in old batch and {val2.shape} in new batch")
+            # non_equivalences = torch.ne(val1, val2).sum().item()
+            # if (non_equivalences > 0):
+            #     raise Exception(f"{name} has {non_equivalences} differences \n val1: {val1} \n val2: {val2}")
+            if not torch.allclose(val1, val2, atol=1e-6, rtol=1e-4):
+                max_disparity = torch.abs(val1 - val2).max().item()
+                # Compute the absolute difference
+                abs_diff = torch.abs(val1 - val2)
+
+                # Find the index of the maximum disparity
+                max_disparity_index_flat = torch.argmax(abs_diff)
+                max_disparity_value = abs_diff.view(-1)[max_disparity_index_flat].item()
+                max_disparity_index_multi_dim = unravel_index(max_disparity_index_flat, abs_diff.shape)
+                extra_info = None
+                if max_disparity_index_multi_dim[-1].item() == 0:
+                    index_tuple = tuple(max_disparity_index_multi_dim[:-1].tolist())
+                    extra_info = f"val1 full tensor at idx {index_tuple} {val1[index_tuple]} \n val2 {val2[index_tuple]}"
+
+                raise Exception(f"""{name} is not all close. max_disparity: {max_disparity}
+                                 val1 shape: {val1.shape}
+                                 max_disparity_index_flat: {max_disparity_index_flat} 
+                                 max_disparity_index_multi_dim: {max_disparity_index_multi_dim} 
+                                 {extra_info}
+                                 \n val1: {val1} \n val2: {val2} """)
+            
+        for val, st_val, name in zip(vals, st_vals, names):
+            check(val, st_val, name)
+            
+    def update_world_model(self, batch: AgentBuffer, st_batch: STBuffer, batch_size: int, raw_window_size: int) -> Dict[str, float]:
         if self.first_update:
             print("WORLD MODEL DEVICE: ", next(self._world_model.parameters()).device)
             cur_actor = self.policy.actor
             if self.split_actor_devices:
                 cur_actor = self.actor_gpu
             print("POLICY DEVICE: ", next(cur_actor.parameters()).device)
+
+        self._DEBUG_assert_batch_equivalence(batch, st_batch, batch_size, raw_window_size + 1)
+
+        batch = st_batch
             
         suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
         positions, rotations, vels, rot_vels, heights, up_dir = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]

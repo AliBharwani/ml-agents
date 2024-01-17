@@ -463,7 +463,7 @@ class AgentBuffer(MutableMapping):
         return mini_batch
     
     @timed
-    def supertrack_sample_mini_batch(self, batch_size: int, raw_window_size: int) -> "AgentBuffer":
+    def supertrack_sample_mini_batch(self, batch_size: int, raw_window_size: int, DEBUG_start_idxes) -> "AgentBuffer":
         """
         Creates a mini-batch with only the supertrack data field
         """
@@ -476,7 +476,8 @@ class AgentBuffer(MutableMapping):
             # Subtract window_size from buff_len because we want to make sure there are enough entries for a full window
             # after the last start idx 
             np.random.randint(0, (buff_len - window_size) // window_size , size=batch_size) * window_size
-        ) 
+        )
+        start_idxes = DEBUG_start_idxes
         for i in start_idxes:
             # make sure there are enough entries after this
             num_steps_remaning =  self[BufferKey.TRAJ_LEN][i] - self[BufferKey.IDX_IN_TRAJ][i] # Usually we would subtract 1 from TRAJ_LEN, but i itself should count as 1
