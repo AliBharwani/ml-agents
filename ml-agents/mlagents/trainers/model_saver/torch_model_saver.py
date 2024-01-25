@@ -1,3 +1,4 @@
+from email.policy import default
 import os
 import shutil
 from mlagents.torch_utils import torch
@@ -89,6 +90,9 @@ class TorchModelSaver(BaseModelSaver):
         reset_global_steps: bool = False,
     ) -> None:
         saved_state_dict = torch.load(load_path)
+        is_on_cuda = torch.default_device() == torch.device("cuda")
+        if is_on_cuda:
+            logger.info("Default device is set to CUDA. Will move modules to CUDA")
         if policy is None:
             modules = self.modules
             policy = self.policy
@@ -100,8 +104,10 @@ class TorchModelSaver(BaseModelSaver):
             try:
                 if isinstance(mod, torch.nn.Module):
                     missing_keys, unexpected_keys = mod.load_state_dict(
-                        saved_state_dict[name], strict=False
+                        saved_state_dict[name], strict=True
                     )
+                    if is_on_cuda:
+                        mod.to(torch.device("cuda"))
                     if missing_keys:
                         logger.warning(
                             f"Did not find these keys {missing_keys} in checkpoint. Initializing."

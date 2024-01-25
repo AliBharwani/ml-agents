@@ -92,7 +92,7 @@ class ModelSerializer:
         # cause problem to barracuda import.
         self.policy = policy
         self.split_on_cpugpu = policy.split_on_cpugpu
-        # MY TODO: Change to Policy Network settings input size
+        # MY TODO: Change to Policy Network settings input size if I want to support multiple observations
         observation_specs = self.policy.behavior_spec.observation_specs
         policy_network_settings : NetworkSettings = policy.network_settings
 

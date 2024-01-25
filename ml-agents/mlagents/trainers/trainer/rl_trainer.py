@@ -58,10 +58,9 @@ class RLTrainer(Trainer):
         self._stats_reporter.add_property(
             StatsPropertyType.HYPERPARAMETERS, self.trainer_settings.as_dict()
         )
-
         self._next_save_step = 0
         self._next_summary_step = 0
-        self.model_saver = self.create_model_saver(
+        self.model_saver = TorchModelSaver(  # type: ignore
             self.trainer_settings, self.artifact_path, self.load
         )
         self._has_warned_group_rewards = False
@@ -123,15 +122,6 @@ class RLTrainer(Trainer):
         Creates an Optimizer object
         """
         pass
-
-    @staticmethod
-    def create_model_saver(
-        trainer_settings: TrainerSettings, model_path: str, load: bool
-    ) -> BaseModelSaver:
-        model_saver = TorchModelSaver(  # type: ignore
-            trainer_settings, model_path, load
-        )
-        return model_saver
 
     def _policy_mean_reward(self) -> Optional[float]:
         """Returns the mean episode reward for the current policy."""
@@ -291,11 +281,6 @@ class RLTrainer(Trainer):
         Steps the trainer, taking in trajectories and updates if ready.
         Will block and wait briefly if there are no trajectories.
         """
-        
-        # if self.profiler_state == ProfilerState.RUNNING and self.update_steps > 5:
-        #     print(f"Stopping cudart on update_step: {self.update_steps}")
-        #     self.profiler_state = ProfilerState.STOPPED
-        #     torch.cuda.cudart().cudaProfilerStop()
 
         if profiling_enabled and self.profiler_state == ProfilerState.NOT_STARTED and self.update_steps > 10:
             print(f"Starting cudart on update_step: {self.update_steps}")
@@ -312,7 +297,7 @@ class RLTrainer(Trainer):
                 num_read = 0
                 processed_large_number_of_trajectories = traj_queue.qsize() > 150
                 if (processed_large_number_of_trajectories):
-                    print(f"{datetime.now().strftime('%I:%M:%S ')} Large number of trajectories in queue: {traj_queue.qsize()}")
+                    logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Large number of trajectories in queue: {traj_queue.qsize()}")
                 for _ in range(traj_queue.qsize()):
                     _queried = True
                     try:
@@ -328,18 +313,18 @@ class RLTrainer(Trainer):
                     self.stats_reporter.add_stat('Avg # Traj Read', num_read, StatsAggregationMethod.AVERAGE)
 
         if (processed_large_number_of_trajectories):
-            print(f"{datetime.now().strftime('%I:%M:%S ')} Finished processing trajectories in queue, num_read: {num_read}")
+            logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Finished processing trajectories in queue, num_read: {num_read}")
 
         with nsys_profiler("_update_policy", self.profiler_state == ProfilerState.RUNNING):
             if self.should_still_train:
                 if self._is_ready_update():
-                    print(f"{datetime.now().strftime('%I:%M:%S ')} Entering trainer update policy")
+                    logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Entering trainer update policy")
                     if self._update_policy():
                         pass
                         for q in self.policy_queues:
                             # Get policies that correspond to the policy queue in question
                             q.put(self.get_policy(q.behavior_id))
-                    print(f"{datetime.now().strftime('%I:%M:%S ')} Exiting trainer update policy")
+                    logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Exiting trainer update policy")
 
 
 class ProfilerState(enum.Enum):

@@ -100,14 +100,12 @@ class SuperTrackTrainer(RLTrainer):
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
         self._step = self.policy.get_current_step()
-        # MY TODO: MAKE SURE SUPER TRACK WORKS W CPU TRAINING
         if not default_device().type == "cuda":
             print(f"WARNING: SUPERTRACK IS NOT TRAINING ON GPU! DEVICE: {default_device()}")
         if self.multiprocess and default_device().type == "cuda":
             logger.info("intializing GPU instance of actor")
             actor_gpu = copy.deepcopy(self.policy.actor)
             actor_gpu.to("cuda")
-            # actor_gpu.to("cpu")
             actor_gpu.train()
             self.optimizer.actor_gpu = actor_gpu
             self.optimizer.set_actor_gpu_to_optimizer()
@@ -128,11 +126,9 @@ class SuperTrackTrainer(RLTrainer):
         Overrides the default to save the replay buffer.
         """
         super().save_model()
-        logger.info("Finished calling super().save_model()")
         if self.checkpoint_replay_buffer:
             self.save_replay_buffer()
     
-    # COMMENTED OUT WHILE USING SUPERTRACK_BUFFER 
     def save_replay_buffer(self) -> None:
         """
         Save the training buffer's update buffer to a pickle file.
@@ -235,7 +231,7 @@ class SuperTrackTrainer(RLTrainer):
         update_steps_before = self.update_steps
         num_update_iterations_possible = int(((self._step - self.hyperparameters.buffer_init_steps) / self.steps_per_update)) - self.update_steps + 1
         num_steps_to_update = min(max_update_iterations, num_update_iterations_possible)
-        print(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
+        logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
 
         while  (self.update_steps - update_steps_before) < max_update_iterations and (
             self._step - self.hyperparameters.buffer_init_steps
@@ -264,9 +260,10 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
 
         if has_updated:
-            print(f"{datetime.now().strftime('%I:%M:%S ')} Finished with updates")
+            logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Finished with updates")
             num_updates = self.update_steps - update_steps_before
-            self._stats_reporter.add_stat("Avg # Updates", num_updates, StatsAggregationMethod.AVERAGE)
+            if max_update_iterations != 1:
+                self._stats_reporter.add_stat("Avg # Updates", num_updates, StatsAggregationMethod.AVERAGE)
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
             self.first_update = False
             # copy policy to cpu 
@@ -275,7 +272,6 @@ class SuperTrackTrainer(RLTrainer):
                 for k, v in state_dict_copy.items():
                     state_dict_copy[k] = v.detach().cpu()
                 self.policy.actor.load_state_dict(state_dict_copy)
-
                 
         return has_updated
 
