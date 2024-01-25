@@ -4,24 +4,19 @@
 
 import os
 import threading
-import time
-import trace
-import traceback
 from contextlib import nullcontext
 
 from typing import Dict, Set, List
 from collections import defaultdict
 from mlagents.trainers.trainer.rl_trainer import ProfilerState
 from mlagents_envs.base_env import BehaviorSpec
-from sympy import Q
 import torch
 import torch.multiprocessing as mp
 
 import numpy as np
-from mlagents.torch_utils.torch import default_device
 from mlagents.trainers import stats
 from mlagents.trainers.settings import TorchSettings
-from mlagents.trainers.stats import StatsReporter, StatsReporterCommand, StatsReporterMP, StatsSummary, StatsWriter
+from mlagents.trainers.stats import StatsReporter, StatsReporterMP
 from mlagents_envs import logging_util
 
 from mlagents_envs.logging_util import get_logger
@@ -31,7 +26,6 @@ from mlagents_envs.exception import (
     UnityCommunicationException,
     UnityCommunicatorStoppedException,
 )
-from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 from mlagents_envs.timers import (
     hierarchical_timer,
     timed,
@@ -43,10 +37,9 @@ from mlagents.trainers.trainer import Trainer
 from mlagents.trainers.environment_parameter_manager import EnvironmentParameterManager
 from mlagents.trainers.trainer import TrainerFactory
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
-from mlagents.trainers.agent_processor import AgentManager, AgentManagerQueue
+from mlagents.trainers.agent_processor import AgentManager
 from mlagents import torch_utils
 from mlagents.torch_utils.globals import get_rank
-from torch.profiler import profile, record_function, ProfilerActivity
 
 
 
@@ -162,9 +155,6 @@ class TrainerController:
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
-                # trainer_process = mp.Process(target=TrainerController.dummy_func, 
-                #                             daemon=True, 
-                #                             name=f"trainer_process")
                 trainer_process = mp.Process(target=TrainerController.trainer_process_update_func,
                                             args=(trainer, self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
                                             daemon=True, 
@@ -180,19 +170,12 @@ class TrainerController:
             )
             self.trainers[brain_name] = trainer
 
-        # if trainer.trainer_settings.use_pytorch_mp:
-        #     # Make sure policy actor is not initialized using CUDA
-        #     torch_utils.set_torch_config(TorchSettings(device="cpu"))
         with torch.device('cpu') if trainer.trainer_settings.use_pytorch_mp else nullcontext():
             policy = trainer.create_policy(
                 parsed_behavior_id,
                 behavior_spec,
             )
-        # if trainer.trainer_settings.use_pytorch_mp:
-        #     # Reset
-        #     torch_utils.set_torch_config(self.torch_settings)
         trainer.torch_settings = self.torch_settings
-        # if not trainer.multiprocess:
         trainer.add_policy(parsed_behavior_id, policy)
 
         agent_manager = AgentManager(
@@ -211,10 +194,8 @@ class TrainerController:
 
         trainer.publish_policy_queue(agent_manager.policy_queue)
         trainer.subscribe_trajectory_queue(agent_manager.trajectory_queue)
-        trainer.parsed_behavior_id = parsed_behavior_id
-        trainer.behavior_spec = behavior_spec
-        # if self.torch_settings.profile:
-        self.DEBUG_ONLY_trajectory_queue = agent_manager.trajectory_queue
+
+        self.trajectory_queue = agent_manager.trajectory_queue
         # Only start new trainers
         if trainerthread is not None or trainer.multiprocess:
             if trainerthread is not None:
@@ -323,7 +304,7 @@ class TrainerController:
                 # For nsys profiling only, we want to profile how it performs reading a large number of trajectories
                 # So advance if we're not in profile mode 
                 # If we are in profile mode, only advance if we less than the number of warmup steps (5) or we have enough trajectories to profile
-                if not self.torch_settings.profile or (trainer.update_steps < 5 or self.DEBUG_ONLY_trajectory_queue.qsize() > 100):
+                if not self.torch_settings.profile or (trainer.update_steps < 5 or self.trajectory_queue.qsize() > 100):
                     if self.torch_settings.profile and trainer.update_steps >= 5:
                         env_manager.close() # we don't care to profile the env manager
                     with hierarchical_timer("trainer_advance"):
@@ -359,9 +340,6 @@ class TrainerController:
         :return:
         """
         self.kill_trainers = True
-        # for trainer in self.trainers.values():
-        #     for traj_q in trainer.trajectory_queues:
-        #         traj_q.close()
         for t in [*self.trainer_threads, *self.trainer_processes]:
             try:
                 t.join(timeout_seconds)
@@ -370,17 +348,7 @@ class TrainerController:
             except Exception as e:
                 self.logger.error(f"Trainer thread {t} threw an exception after {timeout_seconds} seconds")
                 self.logger.exception(e)
-            # finally:
-                # try:
-                # t.terminate()
-                # except ValueError as e:
-                #     self.logger.debug(f"Trainer thread {t} could not be terminated, likely already closed: {e}")
-                # except Exception as e:
-                #     self.logger.exception(f"Trainer thread {t} could not be terminated: {e}")
-        # self.logger.debug("Closing trainer processes")
-        # for t in self.trainer_processes:
-        #     t.close()
-        # self.logger.debug("Closing of trainer processes complete.")
+
         if self.stats_queue is not None:
             self.logger.debug("Closing stats queue")
             self.stats_queue.close()
@@ -395,22 +363,10 @@ class TrainerController:
                     )
                     merge_gauges(thread_timer_stack.gauges)
 
-        # while not self.DEBUG_ONLY_trajectory_queue.empty():
-        #     self.DEBUG_ONLY_trajectory_queue.get_nowait()
-        
-        # try:
-        #     while True:        
-        #         self.DEBUG_ONLY_trajectory_queue.get_nowait()
-        # except Exception as e:
-        #     print(f"got exception {e}")
-
-
-        self.DEBUG_ONLY_trajectory_queue.close()
-        print("cancel_join_thread trajectory queue")
-        self.DEBUG_ONLY_trajectory_queue.cancel_join_thread()
-        # print("join_thread trajectory queue")
-        # self.DEBUG_ONLY_trajectory_queue.join_thread()
-
+        self.trajectory_queue.close()
+        logger = get_logger(__name__)
+        logger.debug("cancel_join_thread trajectory queue")
+        self.trajectory_queue.cancel_join_thread()
 
 
     def trainer_update_func(self, trainer: Trainer) -> None:
@@ -418,7 +374,6 @@ class TrainerController:
             with hierarchical_timer("trainer_advance"):
                 trainer.advance()
 
-        
 
     @staticmethod
     def trainer_process_update_func(trainer: Trainer, torch_settings: TorchSettings,  behavior_spec : BehaviorSpec, log_level: int = logging_util.INFO) -> None:

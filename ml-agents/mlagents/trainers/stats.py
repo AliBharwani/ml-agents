@@ -172,7 +172,6 @@ class ConsoleWriter(StatsWriter):
     def write_stats(
         self, category: str, values: Dict[str, StatsSummary], step: int, training_step: int
     ) -> None:
-        x_axis = training_step if training_step > -1 else step
         is_training = "Not Training"
         if "Is Training" in values:
             stats_summary = values["Is Training"]
@@ -216,9 +215,6 @@ class ConsoleWriter(StatsWriter):
         # else:
         #     log_info.append("No episode was completed since last summary")
         #     log_info.append(is_training)
-        # for key in values.keys():
-        #     if key.startswith("Supertrack"):
-        #         log_info.append(f"{key}: {values[key].sum}")
 
         logger.info(". ".join(log_info) + ".")
 
