@@ -275,6 +275,7 @@ class STBuffer(MutableMapping):
             obs = exp.obs[0]
             if (len(obs) != TOTAL_OBS_LEN):
                 raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
+            
             st_keylist = SupertrackUtils.parse_supertrack_data_field(obs, device=default_device(), use_tensor=True, return_as_keylist=True)
             for key, value in st_keylist.items():
                 self[key][self.effective_idx] = value

@@ -11,7 +11,7 @@ from mlagents_envs.base_env import DecisionSteps, BehaviorSpec
 from mlagents_envs.timers import timed
 
 from mlagents.trainers.settings import NetworkSettings
-from mlagents.trainers.torch_entities.networks import GlobalSteps
+from mlagents.trainers.torch_entities.networks import Actor, GlobalSteps
 
 from mlagents.trainers.torch_entities.utils import ModelUtils
 
@@ -49,7 +49,7 @@ class TorchPolicy(Policy):
         #     "Losses/Value Loss": "value_loss",
         #     "Losses/Policy Loss": "policy_loss",
         # }
-        self.actor = actor_cls(
+        self.actor : Actor = actor_cls(
             observation_specs=self.behavior_spec.observation_specs,
             network_settings=network_settings,
             action_spec=behavior_spec.action_spec,

@@ -746,8 +746,9 @@ class GlobalSteps(nn.Module):
     def __init__(self, device = None):
         super().__init__()
         self.__global_step = nn.Parameter(
-            torch.tensor([0], device=device).to(torch.int64), requires_grad=False, 
+            torch.tensor([0], device=device, dtype=torch.int64), requires_grad=False 
         )
+        self.device = self.__global_step.device
 
     @property
     def current_step(self):

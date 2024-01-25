@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 from typing import List, Dict, NamedTuple, Iterable, Tuple
+from mlagents.torch_utils import torch
 from mlagents_envs.base_env import (
     DecisionSteps,
     TerminalSteps,
@@ -117,17 +118,21 @@ class EnvManager(ABC):
             try:
                 # We make sure to empty the policy queue before continuing to produce steps.
                 # This halts the trainers until the policy queue is empty.
-                # if not self.agent_managers[brain_name].policy_queue.empty():
                 while not self.agent_managers[brain_name].policy_queue.empty():
                     _policy = self.agent_managers[brain_name].policy_queue.get_nowait()
-            except AgentManagerQueue.Empty:
-                if _policy is not None:
-                    logger.info(f"Updating policy for brain {brain_name}")
-                    self.set_policy(brain_name, _policy)
             except Exception as e:
                 logger.exception(
                     f"Error when trying to get policy from queue for {brain_name}: {e}"
                 )
+            if _policy is not None:
+                logger.info(f"Updating policy for brain {brain_name}")
+                self.set_policy(brain_name, _policy)
+                # modules = _policy.get_modules()
+                # if modules['global_step'].device != torch.device('cpu'):
+                #     print(f"[EM] Global step device: {modules['global_step'].device}")
+                # for name, param in modules['Policy'].named_parameters():
+                #     if param.device != torch.device('cpu'):
+                #         print(f"[EM] Policy {name} device: {param.device}")
         # Step the environments
         new_step_infos = self._step()
         return new_step_infos

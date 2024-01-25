@@ -7,6 +7,8 @@ import threading
 import time
 import trace
 import traceback
+from contextlib import nullcontext
+
 from typing import Dict, Set, List
 from collections import defaultdict
 from mlagents.trainers.trainer.rl_trainer import ProfilerState
@@ -179,15 +181,16 @@ class TrainerController:
             self.trainers[brain_name] = trainer
 
         # if trainer.trainer_settings.use_pytorch_mp:
-            # Make sure policy actor is not initialized using CUDA
-            # torch_utils.set_torch_config(TorchSettings(device="cpu"))
-        policy = trainer.create_policy(
-            parsed_behavior_id,
-            behavior_spec,
-        )
+        #     # Make sure policy actor is not initialized using CUDA
+        #     torch_utils.set_torch_config(TorchSettings(device="cpu"))
+        with torch.device('cpu') if trainer.trainer_settings.use_pytorch_mp else nullcontext():
+            policy = trainer.create_policy(
+                parsed_behavior_id,
+                behavior_spec,
+            )
         # if trainer.trainer_settings.use_pytorch_mp:
-            # Reset
-            # torch_utils.set_torch_config(self.torch_settings)
+        #     # Reset
+        #     torch_utils.set_torch_config(self.torch_settings)
         trainer.torch_settings = self.torch_settings
         # if not trainer.multiprocess:
         trainer.add_policy(parsed_behavior_id, policy)
@@ -208,6 +211,9 @@ class TrainerController:
 
         trainer.publish_policy_queue(agent_manager.policy_queue)
         trainer.subscribe_trajectory_queue(agent_manager.trajectory_queue)
+        trainer.parsed_behavior_id = parsed_behavior_id
+        trainer.behavior_spec = behavior_spec
+        # if self.torch_settings.profile:
         self.DEBUG_ONLY_trajectory_queue = agent_manager.trajectory_queue
         # Only start new trainers
         if trainerthread is not None or trainer.multiprocess:
@@ -346,7 +352,7 @@ class TrainerController:
         self._create_trainers_and_managers(env_manager, new_behavior_ids)
         self.registered_behavior_ids |= step_behavior_ids
 
-    def join_threads(self, timeout_seconds: float = 1.0) -> None:
+    def join_threads(self, timeout_seconds: float = 5.0) -> None:
         """
         Wait for threads to finish, and merge their timer information into the main thread.
         :param timeout_seconds:
@@ -388,12 +394,31 @@ class TrainerController:
                         is_parallel=True,
                     )
                     merge_gauges(thread_timer_stack.gauges)
+
+        # while not self.DEBUG_ONLY_trajectory_queue.empty():
+        #     self.DEBUG_ONLY_trajectory_queue.get_nowait()
         
+        # try:
+        #     while True:        
+        #         self.DEBUG_ONLY_trajectory_queue.get_nowait()
+        # except Exception as e:
+        #     print(f"got exception {e}")
+
+
+        self.DEBUG_ONLY_trajectory_queue.close()
+        print("cancel_join_thread trajectory queue")
+        self.DEBUG_ONLY_trajectory_queue.cancel_join_thread()
+        # print("join_thread trajectory queue")
+        # self.DEBUG_ONLY_trajectory_queue.join_thread()
+
+
 
     def trainer_update_func(self, trainer: Trainer) -> None:
         while not self.kill_trainers:
             with hierarchical_timer("trainer_advance"):
                 trainer.advance()
+
+        
 
     @staticmethod
     def trainer_process_update_func(trainer: Trainer, torch_settings: TorchSettings,  behavior_spec : BehaviorSpec, log_level: int = logging_util.INFO) -> None:
@@ -401,6 +426,7 @@ class TrainerController:
         # main process, so we need to set it again.
         logging_util.set_log_level(log_level)
         logger = get_logger(__name__)
+        # Only neccessary when not use 'fork' method to create subprocess
         torch_utils.set_torch_config(torch_settings)
         logger.info(f"Trainer process started on pid {os.getpid()} parent pid {os.getppid()}")
         try:
@@ -422,14 +448,10 @@ class TrainerController:
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the trainer process.: {ex}")
         finally:
+            trainer.trajectory_queues[0].close()
             # prof.stop()
             write_timing_tree(trainer.run_log_path)
             logger.debug("Saving model")
             trainer.save_model()
+            del trainer.update_buffer
             logger.info("Trainer process closing.")
-
-    @staticmethod
-    def dummy_func() -> None:
-        print(f"dummy_func process started on pid {os.getpid()} parent pid {os.getppid()}")
-        while True:
-            time.sleep(1)

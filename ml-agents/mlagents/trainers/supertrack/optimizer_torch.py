@@ -79,7 +79,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         except Exception as e:
             print(f"Exception in check_wm_layernorm at {print_on_true}: {e}") 
          
-    def update_world_model(self, batch, batch_size: int, raw_window_size: int) -> Dict[str, float]:
+    def update_world_model(self, batch, raw_window_size: int) -> Dict[str, float]:
         if self.first_update:
             print("WORLD MODEL DEVICE: ", next(self._world_model.parameters()).device)
             cur_actor = self.policy.actor
@@ -223,11 +223,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         if self.split_actor_devices:
             cur_actor = self.actor_gpu
         cur_actor.train()
-        self._world_model.eval()
-        
-        with nsys_profiler("set grads on world model", nsys_profiler_running):
-            for param in self._world_model.parameters():
-                param.requires_grad = False
+            
+        # self._world_model.eval()
+        # with nsys_profiler("set grads on world model", nsys_profiler_running):
+        #     for param in self._world_model.parameters():
+        #         param.requires_grad = False
         for i in range(raw_window_size):
             with nsys_profiler("update one window step", nsys_profiler_running):
                 with nsys_profiler("gen actor output", nsys_profiler_running):
@@ -303,9 +303,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_optimizer.zero_grad(set_to_none=True)
         loss.backward()
         self.policy_optimizer.step()
-        self._world_model.train()
-        for param in self._world_model.parameters():
-            param.requires_grad = True
+        self.world_model_optimzer.zero_grad(set_to_none=True)
+        # self._world_model.train()
+        # for param in self._world_model.parameters():
+        #     param.requires_grad = True
 
         return update_stats
 

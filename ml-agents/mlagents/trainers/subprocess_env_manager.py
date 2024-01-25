@@ -502,7 +502,7 @@ class SubprocessEnvManager(EnvManager):
         return result
 
     def close(self) -> None:
-        logger.debug("SubprocessEnvManager closing.")
+        logger.info("SubprocessEnvManager closing.")
         for env_worker in self.env_workers:
             env_worker.request_close()
         # Pull messages out of the queue until every worker has CLOSED or we time out.

@@ -96,7 +96,7 @@ class TorchModelSaver(BaseModelSaver):
             modules = policy.get_modules()
         policy = cast(TorchPolicy, policy)
         for name, mod in modules.items():
-            logger.debug(f"Loading module: {name}")
+            logger.info(f"Loading module: {name}")
             try:
                 if isinstance(mod, torch.nn.Module):
                     missing_keys, unexpected_keys = mod.load_state_dict(

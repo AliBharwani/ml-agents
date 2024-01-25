@@ -10,7 +10,7 @@ import time
 import attr
 from mlagents.trainers.supertrack.supertrack_utils import nsys_profiler
 import numpy as np
-from mlagents.torch_utils import torch
+from mlagents.torch_utils import torch, nn
 from mlagents_envs.side_channel.stats_side_channel import StatsAggregationMethod
 
 from mlagents.trainers.policy.checkpoint_manager import (
@@ -221,8 +221,9 @@ class RLTrainer(Trainer):
         """
         Saves training statistics to Tensorboard.
         """
+        training_step = self.update_steps if self.update_steps else -1
         self.stats_reporter.add_stat("Is Training", float(self.should_still_train))
-        self.stats_reporter.write_stats(int(step))
+        self.stats_reporter.write_stats(int(step), training_step)
 
     @abc.abstractmethod
     def _process_trajectory(self, trajectory: Trajectory) -> None:
@@ -334,6 +335,7 @@ class RLTrainer(Trainer):
                 if self._is_ready_update():
                     print(f"{datetime.now().strftime('%I:%M:%S ')} Entering trainer update policy")
                     if self._update_policy():
+                        pass
                         for q in self.policy_queues:
                             # Get policies that correspond to the policy queue in question
                             q.put(self.get_policy(q.behavior_id))

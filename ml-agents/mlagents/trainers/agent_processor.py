@@ -458,7 +458,8 @@ class AgentManagerQueue(Generic[T]):
         try:
             if self.use_simple_queue:
                 return self._queue.put(item)
-            self._queue.put(item, block=block), 
+            # self._queue.put(item, block=block)
+            self._queue.put(item, block=False)
         except Exception as e:
             logger.error(f"failed to put item in queue: {e}")
 

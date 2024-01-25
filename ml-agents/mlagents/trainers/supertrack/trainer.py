@@ -8,6 +8,7 @@ from mlagents.st_buffer import CharTypePrefix, CharTypeSuffix, PDTargetPrefix, P
 from mlagents.trainers.buffer import AgentBuffer, BufferKey
 
 from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils, nsys_profiler
+from mlagents.trainers.torch_entities.utils import ModelUtils
 from mlagents.trainers.trajectory import Trajectory
 
 from mlagents_envs.base_env import BehaviorSpec
@@ -79,6 +80,7 @@ class SuperTrackTrainer(RLTrainer):
          # Don't divide by zero
         self.update_steps = 1
         self.steps_per_update = self.hyperparameters.steps_per_update
+        self.max_update_iterations = self.hyperparameters.max_update_iterations
         self.checkpoint_replay_buffer = self.hyperparameters.save_replay_buffer
         self.wm_window = self.trainer_settings.world_model_network_settings.training_window
         self.policy_window = self.trainer_settings.policy_network_settings.training_window
@@ -219,13 +221,15 @@ class SuperTrackTrainer(RLTrainer):
         self.update_steps = int(max(1, self._step / self.steps_per_update))
 
 
-    def _update_policy(self, max_update_iterations : int = 100) -> bool:
+    def _update_policy(self, max_update_iterations : int = 512) -> bool:
         """
         Uses update_buffer to update the policy. We sample the update_buffer and update
         until the steps_per_update ratio is met.
         """
         has_updated = False
         nsys_profiler_running = self.profiler_state == ProfilerState.RUNNING
+        if self.max_update_iterations > 0:
+            max_update_iterations =  self.max_update_iterations
         if nsys_profiler_running: max_update_iterations = 10
         batch_update_stats: Dict[str, list] = defaultdict(list)
         update_steps_before = self.update_steps
@@ -240,25 +244,13 @@ class SuperTrackTrainer(RLTrainer):
             with nsys_profiler(f"iteration {self.update_steps - update_steps_before}", nsys_profiler_running):
                 with nsys_profiler("sample_mini_batch", nsys_profiler_running):
 
-                    # buff_len = self.update_buffer.num_experiences
-                    # window_size = self.wm_window + 1
-                    # batch_size = self.wm_batch_size
-                    # DEBUG_start_idxes = (
-                    #     # Subtract window_size from buff_len because we want to make sure there are enough entries for a full window
-                    #     # after the last start idx 
-                    #     np.random.randint(0, (buff_len - window_size) // window_size , size=batch_size) * window_size
-                    # )
-
-                    wm_keylist = None#[*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
+                    wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
                     world_model_minibatch = self.update_buffer.sample_mini_batch(self.wm_batch_size, self.wm_window, key_list=wm_keylist)
                     policy_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product([PDTargetPrefix.PRE], PDTargetSuffix)]
                     policy_minibatch = self.update_buffer.sample_mini_batch(self.policy_batch_size, self.policy_window, key_list=policy_keylist)
 
-                    # world_model_minibatch = self.update_buffer.supertrack_sample_mini_batch(self.wm_batch_size, self.wm_window, DEBUG_start_idxes)
-                    # policy_minibatch = self.update_buffer.supertrack_sample_mini_batch(self.policy_batch_size, self.policy_window)
-
                 with nsys_profiler("update_world_model", nsys_profiler_running):
-                    update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_batch_size, self.wm_window)
+                    update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_window)
 
                 with nsys_profiler("update_policy", nsys_profiler_running):
                     update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window, nsys_profiler_running=nsys_profiler_running))
@@ -272,14 +264,18 @@ class SuperTrackTrainer(RLTrainer):
                 has_updated = True
 
         if has_updated:
-            print("Finished with updates")
+            print(f"{datetime.now().strftime('%I:%M:%S ')} Finished with updates")
             num_updates = self.update_steps - update_steps_before
             self._stats_reporter.add_stat("Avg # Updates", num_updates, StatsAggregationMethod.AVERAGE)
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
             self.first_update = False
             # copy policy to cpu 
             if self.multiprocess:
-                self.policy.actor.load_state_dict(self.optimizer.actor_gpu.state_dict())
+                state_dict_copy = copy.deepcopy(self.optimizer.actor_gpu.state_dict())
+                for k, v in state_dict_copy.items():
+                    state_dict_copy[k] = v.detach().cpu()
+                self.policy.actor.load_state_dict(state_dict_copy)
+
                 
         return has_updated
 
@@ -289,19 +285,6 @@ class SuperTrackTrainer(RLTrainer):
         Takes a trajectory and processes it, putting it into the replay buffer.
         """
         super()._process_trajectory(trajectory)
-        # agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-        # if agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA][0] is None:
-        #     # self.stats_reporter.add_stat(f"Supertrack Data in {default_device()}", len(agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]), StatsAggregationMethod.SUM)
-        #     SupertrackUtils.add_supertrack_data_field_OLD(agent_buffer_trajectory, device=default_device())
-        # # else:
-        #     # Bring CPU tensors to GPU 
-        # for st_datum in agent_buffer_trajectory[BufferKey.SUPERTRACK_DATA]:
-        #     # print("Moving supertrack data on trajectory to GPU")
-        #     st_datum.to(default_device())
-        # self._append_to_update_buffer(agent_buffer_trajectory)
-
-        # agent_buffer_trajectory = trajectory.to_supertrack_agentbuffer()
-        # self.update_buffer.add_supertrack_data(agent_buffer_trajectory)
         self.update_buffer.add_supertrack_data(trajectory)
 
     def create_optimizer(self) -> TorchOptimizer:

@@ -109,7 +109,7 @@ class StatsWriter(abc.ABC):
 
     @abc.abstractmethod
     def write_stats(
-        self, category: str, values: Dict[str, StatsSummary], step: int
+        self, category: str, values: Dict[str, StatsSummary], step: int, training_step: int
     ) -> None:
         """
         Callback to record training information
@@ -148,7 +148,7 @@ class GaugeWriter(StatsWriter):
         return s.replace("/", ".").replace(" ", "")
 
     def write_stats(
-        self, category: str, values: Dict[str, StatsSummary], step: int
+        self, category: str, values: Dict[str, StatsSummary], step: int, training_step: int
     ) -> None:
         for val, stats_summary in values.items():
             set_gauge(
@@ -170,8 +170,9 @@ class ConsoleWriter(StatsWriter):
         self.rank = get_rank()
 
     def write_stats(
-        self, category: str, values: Dict[str, StatsSummary], step: int
+        self, category: str, values: Dict[str, StatsSummary], step: int, training_step: int
     ) -> None:
+        x_axis = training_step if training_step > -1 else step
         is_training = "Not Training"
         if "Is Training" in values:
             stats_summary = values["Is Training"]
@@ -258,18 +259,19 @@ class TensorboardWriter(StatsWriter):
         self.hidden_keys: List[str] = hidden_keys if hidden_keys is not None else []
 
     def write_stats(
-        self, category: str, values: Dict[str, StatsSummary], step: int
+        self, category: str, values: Dict[str, StatsSummary], step: int, training_step: int
     ) -> None:
         self._maybe_create_summary_writer(category)
+        x_axis = training_step if training_step > -1 else step
         for key, value in values.items():
             if key in self.hidden_keys:
                 continue
             self.summary_writers[category].add_scalar(
-                f"{key}", value.aggregated_value, step
+                f"{key}", value.aggregated_value, x_axis
             )
             if value.aggregation_method == StatsAggregationMethod.HISTOGRAM:
                 self.summary_writers[category].add_histogram(
-                    f"{key}_hist", np.array(value.full_dist), step
+                    f"{key}_hist", np.array(value.full_dist), x_axis
                 )
             self.summary_writers[category].flush()
         if "Environment/Interrupted" or "Environment/SelfTerminated" in values:
@@ -280,7 +282,7 @@ class TensorboardWriter(StatsWriter):
             if num_selfterminated != 0 or num_interrupted != 0:
                 percent = num_interrupted / (num_interrupted + num_selfterminated) * 100
             self.summary_writers[category].add_scalar(
-                "Environment/Percent Interrupted", percent, step
+                "Environment/Percent Interrupted", percent, x_axis
             )
             self.summary_writers[category].flush()
 
@@ -342,7 +344,7 @@ class StatsReporterABC(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def write_stats(self, step: int) -> None:
+    def write_stats(self, step: int, training_step: int) -> None:
         pass
 
 class StatsReporter(StatsReporterABC):
@@ -417,7 +419,7 @@ class StatsReporter(StatsReporterABC):
                     self.category, key, value, StatsAggregationMethod.MOST_RECENT
                 )
 
-    def write_stats(self, step: int) -> None:
+    def write_stats(self, step: int, training_step: int) -> None:
         """
         Write out all stored statistics that fall under the category specified.
         The currently stored values will be averaged, written out as a single value,
@@ -465,7 +467,8 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
     # Set log level. On some platforms, the logger isn't common with the
     # main process, so we need to set it again.
     logging_util.set_log_level(logging_util.INFO)
-
+    # We want to make sure this process introduces as little overhead as possible
+    torch.set_num_threads(1)
     try:
         while True:
             _queried = False
@@ -481,7 +484,7 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
                     stats_dict[category][key] = [value]
                     stats_aggregation[category][key] = StatsAggregationMethod.MOST_RECENT
                 elif command == StatsReporterCommand.WRITE_STATS:
-                    step = args
+                    step, training_step = args
                     values: Dict[str, StatsSummary] = {}
                     for key in stats_dict[category]:
                         if len(stats_dict[category][key]) > 0:
@@ -491,7 +494,7 @@ def stats_processor(category : str, queue: mp.Queue, writers: List[StatsWriter])
                             )
                             values[key] = stat_summary
                     for writer in writers:
-                        writer.write_stats(category, values, step)
+                        writer.write_stats(category, values, step, training_step)
                     del stats_dict[category]
                 elif command == StatsReporterCommand.ADD_PROPERTY:
                     property_type, value = args
@@ -522,6 +525,7 @@ class StatsReporterMP(StatsReporterABC):
         """
         self.category: str = category
         self.queue = queue
+        # We want this process to use 
 
     def add_stat(
         self,
@@ -547,9 +551,9 @@ class StatsReporterMP(StatsReporterABC):
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
 
-    def write_stats(self, step: int) -> None:
+    def write_stats(self, step: int, training_step: int) -> None:
         try:
-            self.queue.put((StatsReporterCommand.WRITE_STATS, (step)))
+            self.queue.put((StatsReporterCommand.WRITE_STATS, (step, training_step)))
         except Exception as ex:
             logger.exception(f"An unexpected error occurred in the StatsReporter: {ex}")
 

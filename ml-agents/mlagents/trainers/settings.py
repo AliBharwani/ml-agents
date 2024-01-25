@@ -188,6 +188,7 @@ class OffPolicyHyperparamSettings(HyperparamSettings):
     buffer_size: int = 50000
     buffer_init_steps: int = 0
     steps_per_update: float = 1
+    max_update_iterations: int = -1
     save_replay_buffer: bool = False
     reward_signal_steps_per_update: float = 4
 
