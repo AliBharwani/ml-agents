@@ -1,7 +1,6 @@
-from email.policy import default
 import os
 import shutil
-from mlagents.torch_utils import torch
+from mlagents.torch_utils import torch, default_device
 from typing import Dict, Union, Optional, cast, Tuple, List
 from mlagents_envs.exception import UnityPolicyException
 from mlagents_envs.logging_util import get_logger
@@ -90,9 +89,6 @@ class TorchModelSaver(BaseModelSaver):
         reset_global_steps: bool = False,
     ) -> None:
         saved_state_dict = torch.load(load_path)
-        is_on_cuda = torch.default_device() == torch.device("cuda")
-        if is_on_cuda:
-            logger.info("Default device is set to CUDA. Will move modules to CUDA")
         if policy is None:
             modules = self.modules
             policy = self.policy
@@ -106,8 +102,6 @@ class TorchModelSaver(BaseModelSaver):
                     missing_keys, unexpected_keys = mod.load_state_dict(
                         saved_state_dict[name], strict=True
                     )
-                    if is_on_cuda:
-                        mod.to(torch.device("cuda"))
                     if missing_keys:
                         logger.warning(
                             f"Did not find these keys {missing_keys} in checkpoint. Initializing."

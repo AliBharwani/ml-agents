@@ -364,8 +364,7 @@ class TrainerController:
                     merge_gauges(thread_timer_stack.gauges)
 
         self.trajectory_queue.close()
-        logger = get_logger(__name__)
-        logger.debug("cancel_join_thread trajectory queue")
+        self.logger.debug("cancel_join_thread trajectory queue")
         self.trajectory_queue.cancel_join_thread()
 
 
@@ -387,7 +386,8 @@ class TrainerController:
         try:
             trainer._initialize(torch_settings)
         except Exception as e:
-            print(f"Failed to initialize trainer", e.with_traceback(e.__traceback__))
+            print(f"Failed to initialize trainer, exception: ", e.with_traceback(e.__traceback__))
+            raise e
         try:
             while True:
                     with hierarchical_timer("trainer_advance"):
