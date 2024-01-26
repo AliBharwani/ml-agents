@@ -81,43 +81,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         except Exception as e:
             print(f"Exception in check_wm_layernorm at {print_on_true}: {e}")
 
-
-    def DEBUG_v1_wm_loss(self, raw_window_size, positions, rotations, vels, rot_vels, heights, up_dir, kin_rot_t, kin_rvel_t):
-
-
-        cur_pos = positions[:, 0, ...]
-        cur_rots = rotations[:, 0, ...]
-        cur_vels = vels[:, 0, ...]
-        cur_rot_vels = rot_vels[:, 0, ...]
-        loss = 0
-        wpos_loss = wvel_loss = wang_loss = wrot_loss = 0
-
-        for i in range(raw_window_size):
-            cur_heights = heights[:, i, ...]
-            cur_up_dir = up_dir[:, i, ...]
-            # Since the world model does not predict the root position, we have to copy it from the data and not use it in the loss function
-            cur_pos[:, 0, :] = positions[:, i, 0, :]
-            cur_rots[:, 0, :] = rotations[:, i , 0, :]
-            cur_vels[:, 0, :] = vels[:, i, 0, :]
-            cur_rot_vels[:, 0, :] = rot_vels[:, i, 0, :]
-            # Take one step through world
-            cur_pos, cur_rots, cur_vels, cur_rot_vels = self._integrate_through_world_model(cur_pos, cur_rots, cur_vels, cur_rot_vels, cur_heights, cur_up_dir, kin_rot_t[:, i, ...], kin_rvel_t[:, i, ...])
-            # Update loss
-            step_loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(cur_pos[:, 1:, :],
-                                                        positions[:, i+1, 1:, :],
-                                                        cur_rots[:, 1:, :],
-                                                        rotations[:, i+1, 1:, :],
-                                                        cur_vels[:, 1:, :], 
-                                                        vels[:, i+1, 1:, :], 
-                                                        cur_rot_vels[:, 1:, :], 
-                                                        rot_vels[:, i+1, 1:, :])
-            loss += step_loss
-            wpos_loss += raw_losses[0]
-            wvel_loss += raw_losses[1]
-            wang_loss += raw_losses[2]
-            wrot_loss += raw_losses[3]
-        return loss
-         
     def update_world_model(self, batch, raw_window_size: int) -> Dict[str, float]:
         if self.first_update:
             self.logger.debug("WORLD MODEL DEVICE: ", next(self._world_model.parameters()).device)
@@ -133,14 +96,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         kin_rot_t, kin_rvel_t = kin_rot_t[:, :, 1:, :], kin_rvel_t[:, :, 1:, :] 
         kin_rot_t =  pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(kin_rot_t))
 
-        v1_loss = self.DEBUG_v1_wm_loss(raw_window_size, positions.detach().clone(), rotations.detach().clone(), vels.detach().clone(), rot_vels.detach().clone(), heights.detach().clone(), 
-                                        up_dir.detach().clone(), kin_rot_t.detach().clone(), kin_rvel_t.detach().clone())
-
         predicted_pos = positions.detach().clone() # shape [batch_size, window_size, num_bones, 3]
         predicted_rots = rotations.detach().clone()
         predicted_vels = vels.detach().clone()
         predicted_rot_vels = rot_vels.detach().clone()
-        world_model_tensors =  [predicted_pos, predicted_rots, predicted_vels, predicted_rot_vels, heights, up_dir, kin_rot_t, kin_rvel_t]
+        world_model_tensors = [predicted_pos, predicted_rots, predicted_vels, predicted_rot_vels, heights, up_dir, kin_rot_t, kin_rvel_t]
 
         loss = 0
         wpos_loss = wvel_loss = wang_loss = wrot_loss = 0
@@ -165,7 +125,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         wang_loss += raw_losses[2]
         wrot_loss += raw_losses[3]
 
-        print(f"World Model Loss: {loss} V1 loss: {v1_loss} || Diff: {loss - v1_loss}")        
         update_stats = {'World Model/wpos_loss': wpos_loss.item(),
                          'World Model/wvel_loss': wvel_loss.item(),
                          'World Model/wrvel_loss': wang_loss.item(),
@@ -178,6 +137,24 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.world_model_optimzer.step()
         self.first_update = False
         return update_stats
+    
+    def char_state_loss_v2(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
+        def l1_norm(a, b, c = None):
+            diff = c if c is not None else torch.abs(a - b) # shape: [batch_size, window_size, num_bones, 3]
+            return torch.mean(torch.sum(diff, dim=(1,2,3)))
+        
+        raw_pos_l = l1_norm(pos1, pos2) #torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2,3)))
+        raw_vel_l = l1_norm(vel1, vel2) 
+        raw_rvel_l = l1_norm(rvel1, rvel2)
+        # quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
+        quat_diffs = pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2))
+        batch_size, window_size, num_bones, _ = quat_diffs.shape
+        quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, window_size, num_bones, 3)
+        raw_rot_l = l1_norm(None, None, c=torch.abs(quat_logs))  # torch.mean(torch.sum(torch.abs(quat_logs), dim=(1,2,3)))
+
+        wp = wv = wrvel = wr = 1
+        loss = wp*raw_pos_l + wv*raw_vel_l + wrvel*raw_rvel_l + wr*raw_rot_l
+        return loss, wp, wv, wrvel, wr, (raw_pos_l, raw_vel_l, raw_rvel_l, raw_rot_l)
 
     def char_state_loss(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
         # We want every loss to give roughly equal contribution
@@ -203,28 +180,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         loss = wp*raw_pos_l + wv*raw_vel_l + wrvel*raw_rvel_l + wr*raw_rot_l
         return loss, wp, wv, wrvel, wr, (raw_pos_l, raw_vel_l, raw_rvel_l, raw_rot_l)
     
-    def char_state_loss_v2(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
-        # dim=(-1,-2) because we want to sum over the 3 dimensions of each bone, and then sum over the bones
-        raw_pos_l = torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2,3)))
-        raw_vel_l = torch.mean(torch.sum(torch.abs(vel1-vel2), dim =(1,2,3)))
-        raw_rvel_l = torch.mean(torch.sum(torch.abs(rvel1-rvel2), dim =(1,2,3)))
-        # quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
-        quat_diffs = pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2))
-        batch_size, window_size, num_bones, _ = quat_diffs.shape
-        quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, window_size, num_bones, 3)
-        raw_rot_l = torch.mean(torch.sum(torch.abs(quat_logs), dim=(1,2,3)))
-        # print(raw_rot_l)
-        # Make sure they all contribute equally to the total loss
-        # total_loss = raw_pos_l + raw_vel_l + raw_rvel_l + raw_rot_l 
-        # losses = [raw_pos_l, raw_vel_l, raw_rvel_l, raw_rot_l]
-        # Avoid divide by 0
-        # weights = [total_loss / max(1, (4 * l)) for l in losses]
-        # wp, wv, wrvel, wr = weights
-        wp = wv = wrvel = wr = 1
-        loss = wp*raw_pos_l + wv*raw_vel_l + wrvel*raw_rvel_l + wr*raw_rot_l
-        return loss, wp, wv, wrvel, wr, (raw_pos_l, raw_vel_l, raw_rvel_l, raw_rot_l)
-
-
     def _integrate_through_world_model(self,
                                     pos: torch.Tensor, # shape [batch_size, num_bones, 3]
                                     rots: torch.Tensor, # shape [batch_size, num_bones, 4]
