@@ -19,6 +19,7 @@ NUM_BONES = 17
 NUM_T_BONES = 16 # Number of bones that have PD Motors (T = targets)
 ENTRIES_PER_BONE = 13
 POLICY_INPUT_LEN = 518
+POLICY_OUTPUT_LEN = 48
 MINIMUM_TRAJ_LEN = 48
 
 class PDTargetPrefix(enum.Enum):
@@ -385,40 +386,40 @@ class SupertrackUtils:
         result = torch.where(mask, identity_quaternion, quaternions)
         
         return result / torch.norm(result, dim=-1, keepdim=True)
-    
 
     @staticmethod
-    def local(cur_pos: torch.Tensor, # shape [batch_size, num_bones, 3]
-            cur_rots: torch.Tensor, # shape [batch_size, num_bones, 4]
-            cur_vels: torch.Tensor,   # shape [batch_size, num_bones, 3]
-            cur_rot_vels: torch.Tensor, # shape [batch_size, num_bones, 3]
-            cur_heights: torch.Tensor, # shape [batch_size, num_bones]
-            cur_up_dir: torch.Tensor, # shape [batch_size, 3]
+    def local(cur_pos: torch.Tensor, # shape [batch_size, num_bones, 3] OR [..., num_bones, 3]
+            cur_rots: torch.Tensor, # shape [batch_size, num_bones, 4] OR [..., num_bones, 4]
+            cur_vels: torch.Tensor,   # shape [batch_size, num_bones, 3] OR [..., num_bones, 3]
+            cur_rot_vels: torch.Tensor, # shape [batch_size, num_bones, 3] OR [..., num_bones, 3]
+            cur_heights: torch.Tensor, # shape [batch_size, num_bones] OR [..., num_bones]
+            cur_up_dir: torch.Tensor, # shape [batch_size, 3] OR [..., 3]
             rots_as_twoaxis: bool = True,
             unzip_to_batchsize: bool = True,
             ): 
-        B = cur_pos.shape[0] # batch_size
-        root_pos = cur_pos[:, 0:1 , :] # shape [batch_size, 1, 3]
-        inv_root_rots = pyt.quaternion_invert(cur_rots[:, 0:1, :]) # shape [batch_size, 1, 4]
-        local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[:, 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
+        """
+        return tensors of shape [..., NUM_T_BONES, 3/4]
+        """
+        root_pos = cur_pos[..., 0:1 , :] # shape [..., 1, 3]
+        inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :]) # shape [..., 1, 4]
+        local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[..., 1:, :] - root_pos) # shape [batch_size, num_t_bones, 3]
         # Have to clone quat rots to avoid 
         # RuntimeError: Output 0 of UnbindBackward0 is a view and its base or another view of its base has been modified inplace. 
         # This view is the output of a function that returns multiple views. Such functions do not allow the output views to be
         # modified inplace. You should replace the inplace operation by an out-of-place one
-        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[:, 1:, :].clone()) # shape [batch_size, num_t_bones, 4]
+        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [batch_size, num_t_bones, 4]
         if rots_as_twoaxis:
-            return_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
-        else:
-            return_rots = local_rots
-        # two_axis_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots)).reshape(-1, 3, 3)) # shape [batch_size * num_t_bones, 6]
-        local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
-        local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[:, 1:, :]) # shape [batch_size, num_t_bones, 3]
+            local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [batch_size * num_t_bones, 6]
 
-        return_tensors = [local_pos, return_rots, local_vels, local_rot_vels, cur_heights[:, 1:], cur_up_dir]
+        local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[..., 1:, :]) # shape [batch_size, num_t_bones, 3]
+        local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[..., 1:, :]) # shape [batch_size, num_t_bones, 3]
+
+        return_tensors = [local_pos, local_rots, local_vels, local_rot_vels, cur_heights[..., 1:], cur_up_dir]
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
         # Have to reshape instead of view because stride can be messed up in some cases
         if unzip_to_batchsize:
-            return [t.reshape(B, -1) for t in return_tensors]
+            batch_dim = cur_pos.shape[:-2]
+            return [t.reshape(*batch_dim, -1) for t in return_tensors]
         else:
-            return [t for t in return_tensors]
+            return return_tensors
         
