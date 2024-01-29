@@ -5,10 +5,8 @@ import itertools
 from typing import Dict, Tuple, cast
 import os
 from mlagents.st_buffer import CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix, STBuffer
-from mlagents.trainers.buffer import AgentBuffer, BufferKey
 
 from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils, nsys_profiler
-from mlagents.trainers.torch_entities.utils import ModelUtils
 from mlagents.trainers.trajectory import Trajectory
 
 from mlagents_envs.base_env import BehaviorSpec

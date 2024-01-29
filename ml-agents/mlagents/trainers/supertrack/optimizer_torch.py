@@ -59,7 +59,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self._world_model = WorldModelNetwork(
             self.trainer_settings.world_model_network_settings
         )
-        # self._world_model.to("cpu")
         self._world_model.to(default_device())
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self._world_model.train()
@@ -90,9 +89,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         predicted_rot_vels = rot_vels.detach().clone()
         world_model_tensors = [predicted_pos, predicted_rots, predicted_vels, predicted_rot_vels, heights, up_dir, kin_rot_t, kin_rvel_t]
 
-        loss = 0
-        wpos_loss = wvel_loss = wang_loss = wrot_loss = 0
-
         for i in range(raw_window_size):
             # Take one step through world
             next_predicted_values = self._integrate_through_world_model(*[t[:, i, ...] for t in world_model_tensors])
@@ -108,10 +104,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                     vels[:, 1:, 1:, :], 
                                                     predicted_rot_vels[:, 1:, 1:, :], 
                                                     rot_vels[:, 1:, 1:, :])
-        wpos_loss += raw_losses[0]
-        wvel_loss += raw_losses[1]
-        wang_loss += raw_losses[2]
-        wrot_loss += raw_losses[3]
+        wpos_loss = raw_losses[0]
+        wvel_loss = raw_losses[1]
+        wang_loss = raw_losses[2]
+        wrot_loss = raw_losses[3]
 
         update_stats = {'World Model/wpos_loss': wpos_loss.item(),
                          'World Model/wvel_loss': wvel_loss.item(),
@@ -144,7 +140,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         elif num_entries == 6: # rots are in 6D form
             rot1 = pyt.rotation_6d_to_matrix(rot1)
             rot2 = pyt.rotation_6d_to_matrix(rot2)
-            relative_angles = pyt.so3_relative_angle(rot1.reshape(-1, 3, 3), rot2.reshape(-1, 3, 3)).reshape(batch_size, window_size, num_bones)
+            # We keep eps to .5 because even though both rots may be properly formed, the combined rotation
+            # may have a trace that is outside of the acos eligible range. Pytorch3D handles these situations elegantly
+            # with acos_linear_extrapolation
+            relative_angles = pyt.so3_relative_angle(rot1.reshape(-1, 3, 3), rot2.reshape(-1, 3, 3), eps=.5).reshape(batch_size, window_size, num_bones)
             raw_rot_l = relative_angles.sum(dim=(1,2)).mean()
         else:
             raise Exception(f"Rots in unexpected shape: {rot1.shape}")
@@ -207,16 +206,18 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
         s_pos, s_rots, s_vels, s_rvels, s_h, s_up = [batch[(CharTypePrefix.SIM, suffix)]  for suffix in suffixes]
         ground_truth_sim_data = [s_pos, s_rots, s_vels, s_rvels] # shape [batch_size, window_size, num_bones, 3]
+
         k_pos, k_rots, k_vels, k_rvels, k_h, k_up = [batch[(CharTypePrefix.KIN, suffix)] for suffix in suffixes]
         pre_target_rots, pre_target_vels =  batch[(PDTargetPrefix.PRE, PDTargetSuffix.ROT)],  batch[(PDTargetPrefix.PRE, PDTargetSuffix.RVEL)] 
         # Remove root bone from PDTargets 
         pre_target_rots, pre_target_vels = pre_target_rots[:, :, 1:, :], pre_target_vels[:, :, 1:, :]
 
         predicted_spos, predicted_srots, predicted_svels, predicted_srvels = [s.detach().clone() for s in ground_truth_sim_data]
+        sim_state =  [predicted_spos, predicted_srots, predicted_svels, predicted_srvels, s_h, s_up]
+
         local_spos, local_srots, local_svels, local_srvels = [torch.empty(batch_size, window_size, NUM_T_BONES, s.shape[-1]) for s in ground_truth_sim_data]
         local_srots = torch.empty(batch_size, window_size, NUM_T_BONES, 6) # We will put two-axis rotations into this tensor
         local_sim = [local_spos, local_srots, local_svels, local_srvels]
-        sim_state =  [predicted_spos, predicted_srots, predicted_svels, predicted_srvels, s_h, s_up]
         
         local_kin = SupertrackUtils.local(k_pos, k_rots, k_vels, k_rvels, k_h, k_up)
 
@@ -266,6 +267,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                         local_srvels[:, 1:, ...], 
                                                                         local_krvels[:, 1:, ...])
         lpos, lvel, lang, lrot = raw_losses
+        # for l,name in zip(raw_losses, ['lpos', 'lvel', 'lang', 'lrot']):
+        #     if (l.isnan().any()):
+        #         print(f"{name} has nan")
         # Compute regularization losses
         # Take the norm of the last dimensions, sum across windows, and take mean over batch 
         lreg = torch.norm(all_means, p=2 ,dim=-1).sum(dim=-1).mean()
