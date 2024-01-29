@@ -31,7 +31,32 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     steps_per_update: float = 1
     save_replay_buffer: bool = False
     offset_scale: float = 120.0
-    
+
+
+class DynamicLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.wpos_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
+        self.wrot_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
+        self.wvel_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
+        self.wrvel_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
+        self.initialized = nn.Parameter(torch.tensor(False), requires_grad=False)
+
+    def get_reweighted_losses(self, pos_loss, rot_loss, vel_loss, rvel_loss):
+        if not self.initialized.item():
+            total_loss = pos_loss + rot_loss + vel_loss + rvel_loss
+            losses = [pos_loss, rot_loss, vel_loss, rvel_loss]
+            for i, loss in enumerate(losses):
+                if loss.item() == 0:
+                    losses[i] = torch.tensor(1.0)  # Avoid division by zero
+            avg_loss = total_loss / 4
+            self.wpos_loss.data = avg_loss / losses[0]
+            self.wrot_loss.data = avg_loss / losses[1]
+            self.wvel_loss.data = avg_loss / losses[2]
+            self.wrvel_loss.data = avg_loss / losses[3]
+            self.initialized.data = torch.tensor(True)
+            
+        return self.wpos_loss * pos_loss , self.wrot_loss * rot_loss , self.wvel_loss * vel_loss , self.wrvel_loss * rvel_loss
     
 class TorchSuperTrackOptimizer(TorchOptimizer):
     dtime = 1 / 60
@@ -46,11 +71,15 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.offset_scale = self.hyperparameters.offset_scale
         self.wm_lr = trainer_settings.world_model_network_settings.learning_rate
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
-        self.first_update = True
+        self.first_wm_update = True
+        self.first_policy_update = True
         self.split_actor_devices = self.trainer_settings.use_pytorch_mp
         self.actor_gpu = None
         self.policy_optimizer = torch.optim.Adam(self.policy.actor.parameters(), lr=self.policy_lr)
         self.logger = get_logger(__name__)
+        self.wm_loss_weights = DynamicLoss()
+        self.policy_loss_weights = DynamicLoss()
+
 
     def _init_world_model(self):
         """
@@ -69,7 +98,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_optimizer.load_state_dict(policy_optimizer_state)
 
     def update_world_model(self, batch, raw_window_size: int) -> Dict[str, float]:
-        if self.first_update:
+        if self.first_wm_update:
             self.logger.debug("WORLD MODEL DEVICE: ", next(self._world_model.parameters()).device)
             cur_actor = self.policy.actor
             if self.split_actor_devices:
@@ -96,7 +125,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # We slice using [:, 1:, 1:, :] because we want to compute losses over the entire batch, skip the first window step (since that was not predicted by
         # the world model), and skip the root bone 
-        loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(predicted_pos[:, 1:, 1:, :],
+        raw_pos_l, raw_vel_l, raw_rvel_l, raw_rot_l = self.char_state_loss(predicted_pos[:, 1:, 1:, :],
                                                     positions[:, 1:, 1:, :],
                                                     predicted_rots[:, 1:, 1:, :],
                                                     rotations[:, 1:, 1:, :],
@@ -104,22 +133,20 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                     vels[:, 1:, 1:, :], 
                                                     predicted_rot_vels[:, 1:, 1:, :], 
                                                     rot_vels[:, 1:, 1:, :])
-        wpos_loss = raw_losses[0]
-        wvel_loss = raw_losses[1]
-        wang_loss = raw_losses[2]
-        wrot_loss = raw_losses[3]
-
-        update_stats = {'World Model/wpos_loss': wpos_loss.item(),
-                         'World Model/wvel_loss': wvel_loss.item(),
-                         'World Model/wrvel_loss': wang_loss.item(),
-                         'World Model/wrot_loss': wrot_loss.item(),
+        
+        pos_loss, rot_loss, vel_loss, rvel_loss = self.wm_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l)
+        loss = pos_loss + rot_loss + vel_loss + rvel_loss
+        update_stats = {'World Model/wpos_loss': pos_loss.item(),
+                         'World Model/wrot_loss': rot_loss.item(),
+                         'World Model/wvel_loss': vel_loss.item(),
+                         'World Model/wrvel_loss': rvel_loss.item(),
                          'World Model/total loss': loss.item(),
                          'World Model/learning_rate': self.wm_lr}
 
         self.world_model_optimzer.zero_grad(set_to_none=True)
         loss.backward()
         self.world_model_optimzer.step()
-        self.first_update = False
+        self.first_wm_update = False
         return update_stats
     
     def char_state_loss(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
@@ -147,9 +174,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             raw_rot_l = relative_angles.sum(dim=(1,2)).mean()
         else:
             raise Exception(f"Rots in unexpected shape: {rot1.shape}")
-        wp = wv = wrvel = wr = 1
-        loss = wp*raw_pos_l + wv*raw_vel_l + wrvel*raw_rvel_l + wr*raw_rot_l
-        return loss, wp, wv, wrvel, wr, (raw_pos_l, raw_vel_l, raw_rvel_l, raw_rot_l)
+        
+        return raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l
     
     def _integrate_through_world_model(self,
                                     pos: torch.Tensor, # shape [batch_size, num_bones, 3]
@@ -258,7 +284,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         local_kpos, local_krots, local_kvels, local_krvels = [k.reshape(batch_size, window_size, NUM_T_BONES, -1) for k in local_kin[:-2]]
         # We don't want to use the first window step because those were ground truth values
         # We don't need to filter out the root bone because SuperTrackUtils.local already does that
-        loss, wp, wv, wrvel, wr, raw_losses = self.char_state_loss(local_spos[:, 1:, ...], 
+        raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = self.char_state_loss(local_spos[:, 1:, ...], 
                                                                         local_kpos[:, 1:, ...],
                                                                         local_srots[:, 1:, ...],
                                                                         local_krots[:, 1:, ...],
@@ -266,10 +292,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                         local_kvels[:, 1:, ...], 
                                                                         local_srvels[:, 1:, ...], 
                                                                         local_krvels[:, 1:, ...])
-        lpos, lvel, lang, lrot = raw_losses
-        # for l,name in zip(raw_losses, ['lpos', 'lvel', 'lang', 'lrot']):
-        #     if (l.isnan().any()):
-        #         print(f"{name} has nan")
+        pos_loss, rot_loss, vel_loss, rvel_loss = self.policy_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l)
+        loss = pos_loss + rot_loss + vel_loss + rvel_loss
         # Compute regularization losses
         # Take the norm of the last dimensions, sum across windows, and take mean over batch 
         lreg = torch.norm(all_means, p=2 ,dim=-1).sum(dim=-1).mean()
@@ -280,17 +304,17 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         loss += lreg + lsreg
 
         update_stats = {"Policy/Loss": loss.item(),
-                        "Policy/pos_loss": lpos.item(),
-                        "Policy/vel_loss": lvel.item(),
-                        "Policy/rot_loss": lrot.item(),
-                        "Policy/ang_loss": lang.item(),
+                        "Policy/pos_loss": pos_loss.item(),
+                        "Policy/rot_loss": rot_loss.item(),
+                        "Policy/vel_loss": vel_loss.item(),
+                        "Policy/ang_loss": rvel_loss.item(),
                         "Policy/reg_loss": lreg.item(),
                         "Policy/sreg_loss": lsreg.item(),
                         "Policy/learning_rate": self.policy_lr}
         self.policy_optimizer.zero_grad(set_to_none=True)
         loss.backward()
         self.policy_optimizer.step()
-
+        self.first_policy_update = False
         return update_stats
     
     def get_modules(self):
@@ -298,6 +322,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             "Optimizer:WorldModel": self._world_model,
             "Optimizer:world_model_optimzer": self.world_model_optimzer,
             "Optimizer:policy_optimizer": self.policy_optimizer,
+            "Optimizer:world_model_loss_weights": self.wm_loss_weights,
+            "Optimizer:policy_loss_weights": self.policy_loss_weights,
          }
         return modules
     
