@@ -90,6 +90,9 @@ class SuperTrackTrainer(RLTrainer):
         self.first_update = True
 
         self.update_buffer : STBuffer = STBuffer(buffer_size=self.hyperparameters.buffer_size)
+        self.wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
+        self.policy_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product([PDTargetPrefix.PRE], PDTargetSuffix)]
+
 
     def _initialize(self, torch_settings: TorchSettings) -> None:
         self.optimizer._init_world_model()
@@ -234,14 +237,10 @@ class SuperTrackTrainer(RLTrainer):
         while  (self.update_steps - update_steps_before) < max_update_iterations and (
             self._step - self.hyperparameters.buffer_init_steps
         ) / self.update_steps > self.steps_per_update:
-            # buffer = self.update_buffer
             with nsys_profiler(f"iteration {self.update_steps - update_steps_before}", nsys_profiler_running):
                 with nsys_profiler("sample_mini_batch", nsys_profiler_running):
-
-                    wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
-                    world_model_minibatch = self.update_buffer.sample_mini_batch(self.wm_batch_size, self.wm_window, key_list=wm_keylist)
-                    policy_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product([PDTargetPrefix.PRE], PDTargetSuffix)]
-                    policy_minibatch = self.update_buffer.sample_mini_batch(self.policy_batch_size, self.policy_window, key_list=policy_keylist)
+                    world_model_minibatch = self.update_buffer.sample_mini_batch(self.wm_batch_size, self.wm_window, key_list=self.wm_keylist)
+                    policy_minibatch = self.update_buffer.sample_mini_batch(self.policy_batch_size, self.policy_window, key_list=self.policy_keylist)
 
                 with nsys_profiler("update_world_model", nsys_profiler_running):
                     update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_window)

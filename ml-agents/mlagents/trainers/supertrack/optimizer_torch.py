@@ -120,7 +120,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for i in range(raw_window_size):
             # Take one step through world
+            if i > 0: # Copy over root pos and root rot, because world model does not update them
+                predicted_pos[:, i, 0, :] = positions[:, i , 0, :]
+                predicted_rots[:, i, 0, :] = rotations[:, i , 0, :]
             next_predicted_values = self._integrate_through_world_model(*[t[:, i, ...] for t in world_model_tensors])
+            # This overwrites the next window step with the root data of the current pos / rot, since we are updating everything 
             predicted_pos[:, i+1, ...], predicted_rots[:, i+1, ...], predicted_vels[:, i+1, ...], predicted_rot_vels[:, i+1, ...] = next_predicted_values
 
         # We slice using [:, 1:, 1:, :] because we want to compute losses over the entire batch, skip the first window step (since that was not predicted by
@@ -212,13 +216,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # Also that's what the paper does
         vels = vels + accel*self.dtime
         rvels = rvels + rot_accel*self.dtime
-        # Ensure root position and rotation are not overwritten
-        root_pos = pos[:, 0, :].clone()
-        root_rot = rots[:, 0, :].clone()
         pos = pos + vels*self.dtime
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*self.dtime) , rots.clone())
-        pos[:, 0, :] = root_pos
-        rots[:, 0, :] = root_rot
         return pos, rots, vels, rvels
     
 
@@ -255,6 +254,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         for i in range(raw_window_size):
             # Predict PD offsets
             sim_state_window_step_i =  [get_tensor_at_window_step_i(t, i) for t in sim_state]
+            if i > 0: # Copy over root pos and root rot, because world model does not update them
+                predicted_spos[:, i, 0, :] = s_pos[:, i , 0, :]
+                predicted_srots[:, i, 0, :] = s_rots[:, i , 0, :]
             local_sim_window_step_i = SupertrackUtils.local(*sim_state_window_step_i)
             
             local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, i) for k in local_kin]
@@ -293,7 +295,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                         local_srvels[:, 1:, ...], 
                                                                         local_krvels[:, 1:, ...])
         pos_loss, rot_loss, vel_loss, rvel_loss = self.policy_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l)
-        loss = pos_loss + rot_loss + vel_loss + rvel_loss
         # Compute regularization losses
         # Take the norm of the last dimensions, sum across windows, and take mean over batch 
         lreg = torch.norm(all_means, p=2 ,dim=-1).sum(dim=-1).mean()
@@ -301,7 +302,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # Weigh regularization losses to contribute 1/100th of the other losses
         lreg /= 100
         lsreg /= 100
-        loss += lreg + lsreg
+        loss = pos_loss + rot_loss + vel_loss + rvel_loss + lreg + lsreg
 
         update_stats = {"Policy/Loss": loss.item(),
                         "Policy/pos_loss": pos_loss.item(),
