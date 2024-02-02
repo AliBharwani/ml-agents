@@ -120,12 +120,12 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for i in range(raw_window_size):
             # Take one step through world
-            if i > 0: # Copy over root pos and root rot, because world model does not update them
-                predicted_pos[:, i, 0, :] = positions[:, i , 0, :]
-                predicted_rots[:, i, 0, :] = rotations[:, i , 0, :]
             next_predicted_values = self._integrate_through_world_model(*[t[:, i, ...] for t in world_model_tensors])
             # This overwrites the next window step with the root data of the current pos / rot, since we are updating everything 
             predicted_pos[:, i+1, ...], predicted_rots[:, i+1, ...], predicted_vels[:, i+1, ...], predicted_rot_vels[:, i+1, ...] = next_predicted_values
+            # Copy over root pos and root rot, because world model does not update them
+            predicted_pos[:, i+1, 0, :] = positions[:, i+1, 0, :]
+            predicted_rots[:, i+1, 0, :] = rotations[:, i+1, 0, :]
 
         # We slice using [:, 1:, 1:, :] because we want to compute losses over the entire batch, skip the first window step (since that was not predicted by
         # the world model), and skip the root bone 
@@ -254,9 +254,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         for i in range(raw_window_size):
             # Predict PD offsets
             sim_state_window_step_i =  [get_tensor_at_window_step_i(t, i) for t in sim_state]
-            if i > 0: # Copy over root pos and root rot, because world model does not update them
-                predicted_spos[:, i, 0, :] = s_pos[:, i , 0, :]
-                predicted_srots[:, i, 0, :] = s_rots[:, i , 0, :]
             local_sim_window_step_i = SupertrackUtils.local(*sim_state_window_step_i)
             
             local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, i) for k in local_kin]
@@ -273,7 +270,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
                                                                 pre_target_vels[:, i, ...])
             predicted_spos[:, i+1, ...], predicted_srots[:, i+1, ...], predicted_svels[:, i+1, ...], predicted_srvels[:, i+1, ...] = next_sim_state
-
+            # Copy over root pos and root rot, because world model does not update them
+            predicted_spos[:, i+1, 0, :] = s_pos[:, i+1, 0, :]
+            predicted_srots[:, i+1, 0, :] = s_rots[:, i+1, 0, :]
             if i > 0:
                 # Store for loss calculation - we do [:-2] because local_sim_window_step_i also contains s_h and s_up, which we don't need for loss
                 for local_sim_calculated, local_sim_for_loss in zip(local_sim_window_step_i[:-2], local_sim):
@@ -473,6 +472,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
+        # print(run_out["env_action"].continuous)
         # For some reason, sending CPU tensors causes the training to hang
         # This does not occur with CUDA tensors of numpy ndarrays
         # if supertrack_data is not None:

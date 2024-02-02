@@ -296,7 +296,7 @@ class SuperTrackTrainer(RLTrainer):
         :return policy
         """
         actor_cls = SuperTrackPolicyNetwork
-        actor_kwargs = {"conditional_sigma": False, "tanh_squash": True}
+        actor_kwargs = {"conditional_sigma": False, "tanh_squash": False}
 
         policy = TorchPolicy(
             self.seed,
