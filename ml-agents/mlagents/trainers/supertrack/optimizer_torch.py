@@ -249,7 +249,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         def get_tensor_at_window_step_i(t, i):
             return t[:, i, ...]
         
-        all_actions = torch.empty(batch_size, raw_window_size, POLICY_OUTPUT_LEN)
+        all_means = torch.empty(batch_size, raw_window_size, POLICY_OUTPUT_LEN)
 
         for i in range(raw_window_size):
             # Predict PD offsets
@@ -259,9 +259,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, i) for k in local_kin]
             input = torch.cat((*local_kin_at_window_step_i, *local_sim_window_step_i), dim=-1)
 
-            action, runout, _ = cur_actor.get_action_and_stats([input], inputs_already_formatted=True)
+            action, runout, _ = cur_actor.get_action_and_stats([input], inputs_already_formatted=True, return_means=True)
+            all_means[:, i, :] = runout['means']
             output = action.continuous_tensor.reshape(batch_size, NUM_T_BONES, 3)
-            all_actions[:, i, :] = output.detach().clone()
             output =  pyt.axis_angle_to_quaternion(output * self.offset_scale)
             # Compute PD targets
             cur_kin_targets = pyt.quaternion_multiply(pre_target_rots[:, i, ...], output)
@@ -296,8 +296,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         pos_loss, rot_loss, vel_loss, rvel_loss = self.policy_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l)
         # Compute regularization losses
         # Take the norm of the last dimensions, sum across windows, and take mean over batch 
-        lreg = torch.norm(all_actions, p=2 ,dim=-1).sum(dim=-1).mean()
-        lsreg = torch.norm(all_actions, p=1 ,dim=-1).sum(dim=-1).mean()
+        lreg = torch.norm(all_means, p=2 ,dim=-1).sum(dim=-1).mean()
+        lsreg = torch.norm(all_means, p=1 ,dim=-1).sum(dim=-1).mean()
         # Weigh regularization losses to contribute 1/100th of the other losses
         lreg /= 100
         lsreg /= 100
@@ -341,8 +341,8 @@ class PolicyNetworkBody(nn.Module):
         
         _layers = []
         # Used to normalize inputs
-        if self.network_settings.normalize:
-            _layers += [nn.LayerNorm(self.input_size)]
+        # if self.network_settings.normalize:
+        #     _layers += [nn.LayerNorm(self.input_size)]
 
         _layers += [LinearEncoder(
             self.network_settings.input_size,
@@ -392,6 +392,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             tanh_squash=tanh_squash,
             deterministic=network_settings.deterministic,
             init_near_zero=network_settings.init_near_zero,
+            noise_scale=.1
         )
 
     @property

@@ -158,6 +158,7 @@ class GaussianDistribution(nn.Module):
         conditional_sigma: bool = False,
         tanh_squash: bool = False,
         init_near_zero: bool = False,
+        noise_scale: float = 1,
     ):
         super().__init__()
         self.conditional_sigma = conditional_sigma
@@ -170,6 +171,7 @@ class GaussianDistribution(nn.Module):
             bias_init=Initialization.Zero,
         )
         self.tanh_squash = tanh_squash
+        self.noise_scale = noise_scale
         if conditional_sigma:
             self.log_sigma = linear_layer(
                 hidden_size,
@@ -197,7 +199,7 @@ class GaussianDistribution(nn.Module):
         if self.tanh_squash:
             return TanhGaussianDistInstance(mu, torch.exp(log_sigma))
         else:
-            return GaussianDistInstance(mu, torch.exp(log_sigma))
+            return GaussianDistInstance(mu, torch.exp(log_sigma) * self.noise_scale)
 
 
 class MultiCategoricalDistribution(nn.Module):

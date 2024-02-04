@@ -20,8 +20,8 @@ class WorldModelNetwork(nn.Module):
         _layers = []
 
         # Normalize inputs if required
-        if network_settings.normalize:
-            _layers += [nn.LayerNorm(input_size, elementwise_affine=True)]
+        # if network_settings.normalize:
+        #     _layers += [nn.LayerNorm(input_size, elementwise_affine=True)]
             # _layers += [VectorInput(input_size, True)]
 
 
