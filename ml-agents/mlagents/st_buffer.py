@@ -6,16 +6,12 @@ import itertools
 import pdb
 from typing import BinaryIO, DefaultDict, List, Tuple, Union
 from mlagents.torch_utils import torch
-from mlagents.trainers.supertrack.supertrack_utils import MINIMUM_TRAJ_LEN, NUM_BONES, TOTAL_OBS_LEN, SupertrackUtils, CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix
+from mlagents.trainers.supertrack.supertrack_utils import MINIMUM_TRAJ_LEN, NUM_BONES, TOTAL_OBS_LEN, SupertrackUtils, CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix, STSingleBufferKey
 from mlagents.trainers.trajectory import Trajectory
 
 import h5py
 
 from mlagents.torch_utils import torch, default_device
-
-class BufferKey(enum.Enum):
-    IDX_IN_TRAJ = "idx_in_traj"
-    TRAJ_LEN = "traj_len"
 
 class SuffixToNumValues:
     SUFFIX_TO_NUM_VAL = {
@@ -32,7 +28,7 @@ class SuffixToNumValues:
 
 
 STBufferKey = Union[
-    BufferKey, Tuple[PDTargetPrefix, PDTargetSuffix], Tuple[CharTypePrefix, CharTypeSuffix]
+    STSingleBufferKey, Tuple[PDTargetPrefix, PDTargetSuffix], Tuple[CharTypePrefix, CharTypeSuffix]
 ]
 
 STBufferField = torch.tensor # Union[torch.tensor, list]
@@ -70,7 +66,7 @@ class STBuffer(MutableMapping):
 
     @staticmethod
     def _check_key(key):
-        if isinstance(key, BufferKey):
+        if isinstance(key, STSingleBufferKey):
             return
         if isinstance(key, tuple):
             key0, key1 = key
@@ -89,7 +85,7 @@ class STBuffer(MutableMapping):
         """
         Convert the key to a string representation so that it can be used for serialization.
         """
-        if isinstance(key, BufferKey):
+        if isinstance(key, STSingleBufferKey):
             return key.value
         prefix, suffix = key
         return f"{prefix.value}:{suffix.value}"
@@ -101,7 +97,7 @@ class STBuffer(MutableMapping):
         """
         # Simple case: convert the string directly to a BufferKey
         try:
-            return BufferKey(encoded_key)
+            return STSingleBufferKey(encoded_key)
         except ValueError:
             pass
 
@@ -193,13 +189,13 @@ class STBuffer(MutableMapping):
             # Create a boolean mask where True indicates that the condition is met
             mask = (self.hole[0] <= start_idxes) & (start_idxes <= self.hole[1])
             # This puts at immediately at the beginning of the trajectory where the hole is
-            start_idxes[mask] -= self[BufferKey.IDX_IN_TRAJ][start_idxes[mask]]
+            start_idxes[mask] -= self[STSingleBufferKey.IDX_IN_TRAJ][start_idxes[mask]]
             # This puts it at the end of the previous trajectory 
             start_idxes[mask] -= 1
 
         # Make sure for every start idx, there are enough values after this to create a full window 
         # without going into the next trajectory
-        num_steps_remaning = self[BufferKey.TRAJ_LEN][start_idxes] - self[BufferKey.IDX_IN_TRAJ][start_idxes]
+        num_steps_remaning = self[STSingleBufferKey.TRAJ_LEN][start_idxes] - self[STSingleBufferKey.IDX_IN_TRAJ][start_idxes]
         num_steps_to_rewind = window_size - num_steps_remaning
         # Ensure it's not negative. Could also subtract with a mask instead, same thing
         num_steps_to_rewind = torch.clamp(num_steps_to_rewind, min=0)  
@@ -224,7 +220,7 @@ class STBuffer(MutableMapping):
     @staticmethod
     @functools.cache
     def get_all_possible_keys():
-        return [*BufferKey,*itertools.product(PDTargetPrefix, PDTargetSuffix), *itertools.product(CharTypePrefix, CharTypeSuffix)]
+        return [*STSingleBufferKey,*itertools.product(PDTargetPrefix, PDTargetSuffix), *itertools.product(CharTypePrefix, CharTypeSuffix)]
     
     @staticmethod
     @functools.cache
@@ -270,8 +266,8 @@ class STBuffer(MutableMapping):
             raise Exception("Attempting to add trajectory with more than one observation to SuperTrack buffer", len(obs), obs)
         traj_len = len(trajectory.steps)
         for step, exp in enumerate(trajectory.steps):
-            self[BufferKey.IDX_IN_TRAJ][self.effective_idx] = step
-            self[BufferKey.TRAJ_LEN][self.effective_idx] = traj_len
+            self[STSingleBufferKey.IDX_IN_TRAJ][self.effective_idx] = step
+            self[STSingleBufferKey.TRAJ_LEN][self.effective_idx] = traj_len
             obs = exp.obs[0]
             if (len(obs) != TOTAL_OBS_LEN):
                 raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
@@ -283,7 +279,7 @@ class STBuffer(MutableMapping):
         # If we're in the stage of overwriting trajectories 
         if self._cur_idx > self._buffer_size: 
             # Check if the trajectory directly after the last one we added is still usuable 
-            num_steps_in_next_traj = self[BufferKey.TRAJ_LEN][self.effective_idx] - self[BufferKey.IDX_IN_TRAJ][self.effective_idx]
+            num_steps_in_next_traj = self[STSingleBufferKey.TRAJ_LEN][self.effective_idx] - self[STSingleBufferKey.IDX_IN_TRAJ][self.effective_idx]
             if num_steps_in_next_traj < MINIMUM_TRAJ_LEN:
                 end_idx = min(self._buffer_size, self.effective_idx + num_steps_in_next_traj)
                 self.hole = [self.effective_idx, end_idx]
