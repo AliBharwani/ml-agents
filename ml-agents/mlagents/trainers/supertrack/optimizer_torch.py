@@ -101,44 +101,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_optimizer = torch.optim.Adam(self.actor_gpu.parameters(), lr=self.policy_lr)
         self.policy_optimizer.load_state_dict(policy_optimizer_state)
 
-    DEBUG_loaded_trajs = []
-    DEBUG_prev_debug_file_cookie = None
-
-    def DEBUG_verify_batch_entry(self, entry): # entry shape: [window_size, TOTAL_OBS_LEN] 
-        # Load the debug_trajs.json into memory once: 
-        # filepath = "debug_trajs.json"
-        with open("debug_trajs.json", 'r') as f:
-            if self.DEBUG_prev_debug_file_cookie is not None:
-                f.seek(self.DEBUG_prev_debug_file_cookie)
-            for line in f:
-                obj = json.loads(line)
-                obj['rawObs'] = torch.tensor(obj['rawObs'])
-                self.DEBUG_loaded_trajs += [obj]
-            self.DEBUG_prev_debug_file_cookie = f.tell()
-
-        for idx, jsonObj in enumerate(self.DEBUG_loaded_trajs):
-            tensor = jsonObj['rawObs']
-            if torch.allclose(tensor, entry[0]):
-                matched = True
-                agentID = jsonObj['agentID']
-                i, offset = 1, 0
-                while i < entry.shape[0]:
-                    nextJsonObj = self.DEBUG_loaded_trajs[idx + i + offset]
-                    if nextJsonObj['agentID'] != agentID:
-                        offset += 1
-                    elif torch.allclose(nextJsonObj['rawObs'], entry[i]):
-                        i += 1
-                    else:
-                        matched = False
-                        difference_sum = (nextJsonObj['rawObs'] - entry[i]).abs().sum()
-                        print(f"match failed at {i}, start of match was at {idx} difference_sum: {difference_sum}")
-                        break
-
-                if matched:
-                    print(f"Found matching array at {idx}")
-                    return True  # Found a matching array
-        return False
-
     def update_world_model(self, batch, raw_window_size: int) -> Dict[str, float]:
         if self.first_wm_update:
             self.logger.debug(f"WORLD MODEL DEVICE:  {next(self._world_model.parameters()).device}")
@@ -146,14 +108,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             if self.split_actor_devices:
                 cur_actor = self.actor_gpu
             self.logger.debug(f"POLICY DEVICE: {next(cur_actor.parameters()).device}")
-
-        raw_obs_batch = batch[STSingleBufferKey.RAW_OBS_DEBUG]
-        batch_size = raw_obs_batch.shape[0]
-        for i in range(batch_size): # for every batch entry
-            entry = raw_obs_batch[i]
-            if not self.DEBUG_verify_batch_entry(entry):
-                raise Exception(f"Trajectory verification failed at {i}. Failed entry: {entry}")
-            # Verify entry exists in debug_trajs.json
 
         suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
         positions, rotations, vels, rot_vels, heights, up_dir = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]

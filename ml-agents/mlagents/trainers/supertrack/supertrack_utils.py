@@ -25,7 +25,6 @@ MINIMUM_TRAJ_LEN = 48
 class STSingleBufferKey(enum.Enum):
     IDX_IN_TRAJ = "idx_in_traj"
     TRAJ_LEN = "traj_len"
-    RAW_OBS_DEBUG = "raw_obs_debug"
 
 class PDTargetPrefix(enum.Enum):
     PRE = "pre"
