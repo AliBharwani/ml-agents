@@ -48,16 +48,7 @@ class DynamicLoss(nn.Module):
         self.wrvel_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
         self.initialized = nn.Parameter(torch.tensor(False), requires_grad=False)
 
-    def get_reweighted_losses(self, pos_loss, rot_loss, vel_loss, rvel_loss, launch_pdb = False):
-        a = [(pos_loss, 'pos_loss'), (rot_loss, 'rot_loss'), (vel_loss, 'vel_loss'), (rvel_loss, 'rvel_loss')]
-        for loss, name in a: 
-            if hn(loss):
-                print(f"{name} has nan in reweighted losses function!")
-            elif loss.abs().item() > 1e25:
-                print(f"OUTLIER - {name} has value: {loss.item()} !")
-            else:
-                print(f"{name} has value: {loss.item()} !")
-
+    def get_reweighted_losses(self, pos_loss, rot_loss, vel_loss, rvel_loss):
         if not self.initialized.item():
             total_loss = pos_loss + rot_loss + vel_loss + rvel_loss
             losses = [pos_loss, rot_loss, vel_loss, rvel_loss]
@@ -70,11 +61,6 @@ class DynamicLoss(nn.Module):
             self.wvel_loss.data = avg_loss / losses[2]
             self.wrvel_loss.data = avg_loss / losses[3]
             self.initialized.data = torch.tensor(True)
-            print(f"intiialized loss weights with: ")
-            print(f"self.wpos_loss.data: {self.wpos_loss.data}")
-            print(f"self.wrot_loss.data: {self.wrot_loss.data}")
-            print(f"self.wvel_loss.data: {self.wvel_loss.data}")
-            print(f"self.wrvel_loss.data: {self.wrvel_loss.data}")
         return self.wpos_loss * pos_loss , self.wrot_loss * rot_loss , self.wvel_loss * vel_loss , self.wrvel_loss * rvel_loss
 
 class TorchSuperTrackOptimizer(TorchOptimizer):
@@ -98,17 +84,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.logger = get_logger(__name__)
         self.wm_loss_weights = DynamicLoss()
         self.policy_loss_weights = DynamicLoss()
-
-    def check_wm_layernorm(self, print_on_true : str = None):
-            try: 
-                for layer in self._world_model.layers:
-                    if isinstance(layer, nn.LayerNorm):
-                        if torch.allclose(layer.weight, torch.zeros_like(layer.weight)):
-                            print(f"Layer norm weight is 0! at: {print_on_true} ")
-                            print(f"World model layer norm data ptr: {self._world_model.layers[0].weight.data_ptr()}")
-                            pdb.set_trace()
-            except Exception as e:
-                print(f"Exception in check_wm_layernorm at {print_on_true}: {e}") 
                 
     def _init_world_model(self):
         """
@@ -212,7 +187,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                     predicted_rot_vels[:, 1:, 1:, :], 
                                                     rot_vels[:, 1:, 1:, :])
         
-        print("World Modelreweighting losses")
         pos_loss, rot_loss, vel_loss, rvel_loss = self.wm_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l)
         loss = pos_loss + rot_loss + vel_loss + rvel_loss
         update_stats = {'World Model/wpos_loss': pos_loss.item(),
@@ -318,11 +292,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         local_spos, local_srots, local_svels, local_srvels = [torch.empty(batch_size, raw_window_size, NUM_T_BONES, s.shape[-1]) for s in ground_truth_sim_data]
         local_srots = torch.empty(batch_size, raw_window_size, NUM_T_BONES, 6) # We will put two-axis rotations into this tensor
         local_sim = [local_spos, local_srots, local_svels, local_srvels]
-        local_sim_copy = [x.clone().detach() for x in local_sim]
-        num_nan = lambda x : sum([v.isnan().sum().item() for v in x])
-        num_nans_before = num_nan(local_sim)
-
-        # num_nans_outside_root_before = sum([x[:, 1:, ...].isnan().sum().item() for x in local_sim])
 
         local_kin = SupertrackUtils.local(k_pos, k_rots, k_vels, k_rvels, k_h, k_up)
 
@@ -331,35 +300,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         
         all_means = torch.empty(batch_size, raw_window_size, POLICY_OUTPUT_LEN)
 
-        nans_in_local_output = 0
-
-        nans_in_last_loop = 0
-        num_nans_in_copy_stage = 0
-
         sim_state_window_step_i =  [get_tensor_at_window_step_i(t, 0) for t in sim_state]
         local_sim_window_step_i = SupertrackUtils.local(*sim_state_window_step_i)
 
         for i in range(raw_window_size):
             # Predict PD offsets
-            # sim_state_window_step_i =  [get_tensor_at_window_step_i(t, i) for t in sim_state]
-            # local_sim_window_step_i = SupertrackUtils.local(*sim_state_window_step_i)
-            # We've converted the previous steps output into local space, copy that over for loss computation
-            # we do [:-2] because local_sim_window_step_i also contains s_h and s_up, which we don't need for loss
-            # For i == 1, we use the ground truth sim data, so we don't include that for loss computation
-            # if i > 0:
-            #     for local_sim_for_loss, local_sim_calculated in zip(local_sim, local_sim_window_step_i[:-2]):
-            #         local_sim_for_loss[:, i - 1, ...] = local_sim_calculated.reshape(batch_size, NUM_T_BONES, -1)
-                # num_nan_local_sim_before = num_nan(local_sim)
-                # for local_sim_for_loss, local_sim_calculated in zip(local_sim, local_sim_window_step_i[:-2]):
-                #     reshaped_target =  local_sim_calculated.reshape(batch_size, NUM_T_BONES, -1)
-                #     nans_in_last_loop +=  reshaped_target.isnan().sum().item()
-                #     local_sim_for_loss[:, i - 1, ...] = reshaped_target
-                #     num_nans_in_copy_stage += local_sim_for_loss[:, i - 1, ...].isnan().sum().item()
-                #     # local_sim_for_loss[:, i, ...] = local_sim_calculated.reshape(batch_size, NUM_T_BONES, -1)
-                # num_nan_local_sim_after = num_nan(local_sim)
-                # print(f"num_nan_local_sim_before: {num_nan_local_sim_before} num_nan_local_sim_after: {num_nan_local_sim_after} diff : {num_nan_local_sim_before - num_nan_local_sim_after }")
-
-            nans_in_local_output += sum([x.isnan().sum().item() for x in local_sim_window_step_i ])
             local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, i) for k in local_kin]
             input = torch.cat((*local_kin_at_window_step_i, *local_sim_window_step_i), dim=-1)
 
@@ -380,38 +325,29 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
             sim_state_window_step_i =  [get_tensor_at_window_step_i(t, i + 1) for t in sim_state]
             local_sim_window_step_i = SupertrackUtils.local(*sim_state_window_step_i)
+            # We've converted this steps output into local space, copy that over for loss computation
+            # we do [:-2] because local_sim_window_step_i also contains s_h and s_up, which we don't need for loss
             for local_sim_for_loss, local_sim_calculated in zip(local_sim, local_sim_window_step_i[:-2]):
                 local_sim_for_loss[:, i, ...] = local_sim_calculated.reshape(batch_size, NUM_T_BONES, -1)
-        
-        # For the last iteration, we don't
-        num_nans_after= num_nan(local_sim)
-        # num_nans_outside_root_after = sum([x[:, 1:, ...].isnan().sum().item() for x in local_sim])
-
-        nans_in_copy = num_nan(local_sim_copy)
-        print(f"NaNs before: {num_nans_before} NaNs after: {num_nans_after}")
-        print(f"Nans in copy: {nans_in_copy}")
-        # print(f"num_nans_outside_root_before: {num_nans_outside_root_before} num_nans_outside_root_after: {num_nans_outside_root_after}")
-        # print(f"nans_in_local_output: {nans_in_local_output} nans_in_last_loop: {nans_in_last_loop} num_nans_in_copy_stage: {num_nans_in_copy_stage}")
 
         # Compute losses:
         # "The difference between this prediction [of simulated state] and the target
         # kinematic states K is then computed in the local space, and the
         # losses used to update the weights of the policy"
-        local_kpos, local_krots, local_kvels, local_krvels = [k.reshape(batch_size, window_size, NUM_T_BONES, -1) for k in local_kin[:-2]]
-        # We don't want to use the first window step because those were ground truth values
+
+        # We don't want to use the first window step because those were ground truth values (for local_kin data)
         # We don't need to filter out the root bone because SuperTrackUtils.local already does that
-                
-        pdb.set_trace()
+        local_kpos, local_krots, local_kvels, local_krvels = [k.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] for k in local_kin[:-2]]
+        # pdb.set_trace()
         raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = self.char_state_loss(local_spos, 
-                                                                        local_kpos[:, 1:, ...],
+                                                                        local_kpos,
                                                                         local_srots,
-                                                                        local_krots[:, 1:, ...],
+                                                                        local_krots,
                                                                         local_svels,
-                                                                        local_kvels[:, 1:, ...], 
+                                                                        local_kvels, 
                                                                         local_srvels,
-                                                                        local_krvels[:, 1:, ...])
-        print("Policy reweighting losses")
-        pos_loss, rot_loss, vel_loss, rvel_loss = self.policy_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l, launch_pdb=True)
+                                                                        local_krvels)
+        pos_loss, rot_loss, vel_loss, rvel_loss = self.policy_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l)
         # Compute regularization losses
         # Take the norm of the last dimensions, sum across windows, and take mean over batch 
         lreg = torch.norm(all_means, p=2 ,dim=-1).sum(dim=-1).mean()
@@ -591,7 +527,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
-        # print(run_out["env_action"].continuous)
         # For some reason, sending CPU tensors causes the training to hang
         # This does not occur with CUDA tensors of numpy ndarrays
         # if supertrack_data is not None:
