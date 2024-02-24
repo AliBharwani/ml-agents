@@ -188,10 +188,7 @@ class STBuffer(MutableMapping):
             # If any start_idx falls within the hole, have it use the the traj immediately behind it
             # Create a boolean mask where True indicates that the condition is met
             mask = (self.hole[0] <= start_idxes) & (start_idxes <= self.hole[1])
-            # This puts at immediately at the beginning of the trajectory where the hole is
-            start_idxes[mask] -= self[STSingleBufferKey.IDX_IN_TRAJ][start_idxes[mask]]
-            # This puts it at the end of the previous trajectory 
-            start_idxes[mask] -= 1
+            start_idxes[mask] = self.hole[0] - 1
 
         # Make sure for every start idx, there are enough values after this to create a full window 
         # without going into the next trajectory
@@ -280,7 +277,7 @@ class STBuffer(MutableMapping):
             num_steps_in_next_traj = self[STSingleBufferKey.TRAJ_LEN][self.effective_idx] - self[STSingleBufferKey.IDX_IN_TRAJ][self.effective_idx]
             if num_steps_in_next_traj < MINIMUM_TRAJ_LEN:
                 end_idx = min(self._buffer_size, self.effective_idx + num_steps_in_next_traj)
-                self.hole = [self.effective_idx, end_idx]
+                self.hole = [torch.tensor(self.effective_idx), end_idx]
             else: 
                 self.hole = None
 
