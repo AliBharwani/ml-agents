@@ -430,7 +430,7 @@ class StatsReporter(StatsReporterABC):
                     stat_summary = self._get_stats_summaries(key)
                     values[key] = stat_summary
             for writer in StatsReporter.writers:
-                writer.write_stats(self.category, values, step)
+                writer.write_stats(self.category, values, step, training_step)
             del StatsReporter.stats_dict[self.category]
 
     def _get_stats_summaries(self, key: str) -> StatsSummary:

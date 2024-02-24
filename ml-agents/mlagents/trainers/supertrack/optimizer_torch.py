@@ -101,19 +101,20 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_optimizer = torch.optim.Adam(self.actor_gpu.parameters(), lr=self.policy_lr)
         self.policy_optimizer.load_state_dict(policy_optimizer_state)
 
-    DEBUG_loaded_trajs = None
+    DEBUG_loaded_trajs = []
+    DEBUG_prev_debug_file_cookie = None
 
     def DEBUG_verify_batch_entry(self, entry): # entry shape: [window_size, TOTAL_OBS_LEN] 
         # Load the debug_trajs.json into memory once: 
-        if self.DEBUG_loaded_trajs is None: 
-            filepath = "debug_trajs.json"
-            self.DEBUG_loaded_trajs = []
-            with open(filepath, 'r') as f:
-                for line in f:
-                    obj = json.loads(line)
-                    obj['rawObs'] = torch.tensor(obj['rawObs'])
-                    self.DEBUG_loaded_trajs += [obj]
-
+        # filepath = "debug_trajs.json"
+        with open("debug_trajs.json", 'r') as f:
+            if self.DEBUG_prev_debug_file_cookie is not None:
+                f.seek(self.DEBUG_prev_debug_file_cookie)
+            for line in f:
+                obj = json.loads(line)
+                obj['rawObs'] = torch.tensor(obj['rawObs'])
+                self.DEBUG_loaded_trajs += [obj]
+            self.DEBUG_prev_debug_file_cookie = f.tell()
 
         for idx, jsonObj in enumerate(self.DEBUG_loaded_trajs):
             tensor = jsonObj['rawObs']
