@@ -311,16 +311,12 @@ class SupertrackUtils:
                 post_targets=post_targets[i]) for i in range(B)]
     
     @staticmethod
-    def parse_supertrack_data_field(obs: Union[torch.tensor, np.ndarray], pin_memory: bool = False, device = None, use_tensor=None, return_as_keylist = False) -> AgentBuffer:
+    def parse_supertrack_data_field(obs: Union[torch.tensor, np.ndarray], pin_memory: bool = False, device = None, use_tensor=None, return_as_keylist = False):
         if use_tensor is None:
             use_tensor = torch.is_tensor(obs)
         elif use_tensor and type(obs) is np.ndarray:
             obs = torch.as_tensor(np.asanyarray(obs), device=device, dtype=torch.float32)
 
-        # FOR DEBUGGING
-        debug_obs = {}
-        if use_tensor:
-            debug_obs[STSingleBufferKey.RAW_OBS_DEBUG] = obs.clone()
         idx = 0
         sim_char_state, idx = SupertrackUtils.extract_char_state(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         # Extract kin char state
@@ -344,7 +340,6 @@ class SupertrackUtils:
             (PDTargetPrefix.POST, PDTargetSuffix.RVEL) : post_targets.rot_velocities,
             **SupertrackUtils._st_charstate_keylist_helper(CharTypePrefix.KIN, kin_char_state),
             **SupertrackUtils._st_charstate_keylist_helper(CharTypePrefix.SIM, sim_char_state),
-            **debug_obs,
         }
     
     @staticmethod

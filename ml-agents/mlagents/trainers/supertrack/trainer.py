@@ -6,7 +6,7 @@ from typing import Dict, Tuple, cast
 import os
 from mlagents.st_buffer import CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix, STBuffer
 
-from mlagents.trainers.supertrack.supertrack_utils import SupertrackUtils, nsys_profiler
+from mlagents.trainers.supertrack.supertrack_utils import STSingleBufferKey, SupertrackUtils, nsys_profiler
 from mlagents.trainers.trajectory import Trajectory
 
 from mlagents_envs.base_env import BehaviorSpec
@@ -90,7 +90,7 @@ class SuperTrackTrainer(RLTrainer):
         self.first_update = True
 
         self.update_buffer : STBuffer = STBuffer(buffer_size=self.hyperparameters.buffer_size)
-        self.wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
+        self.wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix), STSingleBufferKey.RAW_OBS_DEBUG]
         self.policy_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product([PDTargetPrefix.PRE], PDTargetSuffix)]
 
 

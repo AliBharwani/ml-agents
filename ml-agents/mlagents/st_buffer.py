@@ -52,6 +52,8 @@ class STBuffer(MutableMapping):
             if isinstance(key, tuple): # We only tuple data in the batch
                 self[key] = torch.empty(buffer_size, *STBuffer.suffix_to_tensor_shape(key[1]))
                 # print(f"Assinging {key[0].value} , {key[1].value} the following shape: {(buffer_size, *STBuffer.suffix_to_tensor_shape(key[1]))}")
+            elif key == STSingleBufferKey.RAW_OBS_DEBUG:
+                self[key] = torch.empty(buffer_size, TOTAL_OBS_LEN)
             else: 
                 self[key] = torch.zeros(buffer_size, dtype=torch.int32)
         # Num values in the buffer
@@ -176,6 +178,9 @@ class STBuffer(MutableMapping):
         window_size = raw_window_size + 1
         mini_batch = STBuffer()
         for key in key_list:
+            if key == STSingleBufferKey.RAW_OBS_DEBUG:
+                mini_batch[key] = torch.empty(batch_size, window_size, TOTAL_OBS_LEN)
+                continue
             mini_batch[key] = torch.empty(batch_size, window_size, *STBuffer.suffix_to_tensor_shape(key[1]))
         buff_len = self.num_experiences
         # Subtract window_size from buff_len because we want to make sure there are enough entries for a full window
@@ -210,10 +215,9 @@ class STBuffer(MutableMapping):
             # Use advanced indexing to extract slices
             # We want to gather along the first dimension of self[key]
             mini_batch[key] = self[key][indices]  # Shape: (batch_size, window_size, 17, 3)
-            if normalize_quat and ((key[0] == PDTargetPrefix.POST or key[0] == PDTargetPrefix.PRE) and key[1] == PDTargetSuffix.ROT):
-                mini_batch[key] = SupertrackUtils.normalize_quat(self[key][indices])
-            else:
-                mini_batch[key] = self[key][indices] 
+            if normalize_quat and not key == STSingleBufferKey.RAW_OBS_DEBUG:
+                if (key[0] == PDTargetPrefix.POST or key[0] == PDTargetPrefix.PRE) and key[1] == PDTargetSuffix.ROT:
+                    mini_batch[key] = SupertrackUtils.normalize_quat(self[key][indices])
 
         return mini_batch
     
@@ -271,7 +275,8 @@ class STBuffer(MutableMapping):
             obs = exp.obs[0]
             if (len(obs) != TOTAL_OBS_LEN):
                 raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
-            
+            obs_clone = torch.from_numpy(obs).clone()
+            self[STSingleBufferKey.RAW_OBS_DEBUG][self.effective_idx] = obs_clone
             st_keylist = SupertrackUtils.parse_supertrack_data_field(obs, device=default_device(), use_tensor=True, return_as_keylist=True)
             for key, value in st_keylist.items():
                 self[key][self.effective_idx] = value
