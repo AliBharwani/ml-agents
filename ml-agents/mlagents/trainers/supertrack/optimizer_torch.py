@@ -218,8 +218,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # Integrate using Semi-Implicit Euler
         # We use semi-implicit so the model can influence position and velocity losses for the first timestep
         # Also that's what the paper does
-        vels = vels + accel*self.dtime
-        rvels = rvels + rot_accel*self.dtime
+        vels = vels + accel
+        rvels = rvels + rot_accel
         pos = pos + vels*self.dtime
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*self.dtime) , rots.clone())
         return pos, rots, vels, rvels
