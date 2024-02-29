@@ -6,6 +6,7 @@ from mlagents.trainers.settings import NetworkSettings, OffPolicyHyperparamSetti
 import attr
 import pdb
 from mlagents.torch_utils import torch, nn, default_device
+import numpy as np
 import pytorch3d.transforms as pyt
 from mlagents.trainers.supertrack.supertrack_utils import  NUM_BONES, NUM_T_BONES, POLICY_INPUT_LEN, POLICY_OUTPUT_LEN, STSingleBufferKey, SupertrackUtils, nsys_profiler
 from mlagents.trainers.supertrack.world_model import WorldModelNetwork
@@ -78,7 +79,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
         self.first_wm_update = True
         self.first_policy_update = True
-        self.split_actor_devices = self.trainer_settings.use_pytorch_mp
+        self.split_actor_devices = self.trainer_settings.use_pytorch_mp and default_device() == torch.device('cuda')
         self.actor_gpu = None
         self.policy_optimizer = torch.optim.Adam(self.policy.actor.parameters(), lr=self.policy_lr)
         self.logger = get_logger(__name__)
@@ -100,6 +101,76 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         policy_optimizer_state = self.policy_optimizer.state_dict()
         self.policy_optimizer = torch.optim.Adam(self.actor_gpu.parameters(), lr=self.policy_lr)
         self.policy_optimizer.load_state_dict(policy_optimizer_state)
+    
+    DEBUG_loaded_trajs = []
+    DEBUG_prev_debug_file_cookie = None
+
+    def DEBUG_read_file(self):
+        # Load the debug_trajs.json into memory once: 
+        # filepath = "debug_trajs.json"
+        with open("debug_trajs.json", 'r') as f:
+            if self.DEBUG_prev_debug_file_cookie is not None:
+                f.seek(self.DEBUG_prev_debug_file_cookie)
+            for line in f:
+                obj = json.loads(line)
+                self.DEBUG_loaded_trajs += [obj]
+            self.DEBUG_prev_debug_file_cookie = f.tell()
+
+    def DEBUG_verify_batch(self, batch):
+        self.DEBUG_read_file()
+        
+        def check_match(jsonObj, batch, batch_idx, window_idx, set_trace = False):
+            suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
+            json_suffix_keys = ["pos", "rot", "vel", "rvel", "height", "up_dir"] 
+            # suffixes = [CharTypeSuffix.POSITION]
+            # json_suffix_keys = ["pos"] 
+            for char_prefix, char_key in [(CharTypePrefix.KIN, "kinInfo"), (CharTypePrefix.SIM, "simInfo")]:
+                # py_pos, py_rot, py_vel, py_rvel, py_h, py_up_dir = [batch[(char_prefix, suffix)][batch_idx] for suffix in suffixes]
+                # file_pos, file_rot, file_vel, file_rvel, file_h, file_up_dir = [jsonObj[char_key][suffix_key] for suffix_key in json_suffix_keys]
+                py_vals = [batch[(char_prefix, suffix)][batch_idx][window_idx] for suffix in suffixes]
+                file_vals = [jsonObj[char_key][suffix_key] for suffix_key in json_suffix_keys]
+                if set_trace:
+                    pdb.set_trace()
+                for py_val, file_val, name in zip(py_vals, file_vals, json_suffix_keys):
+                    py_val_flat = py_val.flatten()
+                    # pdb.set_trace()
+                    are_equal = np.allclose(py_val_flat, file_val)
+                    if not are_equal:
+                        return False
+            return True
+        
+        def check_raw_obs(jsonObj, batch, batch_idx, window_idx, set_trace = False):
+            return np.allclose(jsonObj["rawObs"], batch[STSingleBufferKey.RAW_OBS_DEBUG][batch_idx, window_idx, ...])
+
+        batch_size, window_size, _, __ = batch[(CharTypePrefix.SIM, CharTypeSuffix.POSITION)].shape
+        print(f"Checking batch of shape: {batch[(CharTypePrefix.SIM, CharTypeSuffix.POSITION)].shape}")
+
+        for batch_idx in range(batch_size):
+            entry_found = False
+            for idx, jsonObj in enumerate(self.DEBUG_loaded_trajs):
+                if check_match(jsonObj, batch, batch_idx, 0):
+                    matched = True
+                    agentID = jsonObj['agentID']
+                    window_step, offset = 1, 0
+                    while window_step < window_size:
+                        nextJsonObj = self.DEBUG_loaded_trajs[idx + window_step + offset]
+                        if nextJsonObj['agentID'] != agentID:
+                            offset += 1
+                        elif check_match(nextJsonObj, batch, batch_idx, window_step):
+                            window_step += 1
+                        else:
+                            matched = False
+                            # print(f"match for batch entry {batch_idx} failed at window step {window_step}, start of match was at {idx}")
+                            # check_match(nextJsonObj, batch, batch_idx , window_step, set_trace=True)
+                            break
+                    if matched:
+                        entry_found = True
+                        break
+            if not entry_found:
+                print(f"Batch verification failed at {batch_idx}")
+                pdb.set_trace()
+                # raise Exception(f"Batch verification failed at {i}")
+    
 
     def update_world_model(self, batch, raw_window_size: int) -> Dict[str, float]:
         if self.first_wm_update:
@@ -108,6 +179,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             if self.split_actor_devices:
                 cur_actor = self.actor_gpu
             self.logger.debug(f"POLICY DEVICE: {next(cur_actor.parameters()).device}")
+
+        self.DEBUG_verify_batch(batch)
 
         suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
         positions, rotations, vels, rot_vels, heights, up_dir = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]
@@ -218,8 +291,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # Integrate using Semi-Implicit Euler
         # We use semi-implicit so the model can influence position and velocity losses for the first timestep
         # Also that's what the paper does
-        vels = vels + accel
-        rvels = rvels + rot_accel
+        vels = vels + accel*self.dtime
+        rvels = rvels + rot_accel*self.dtime 
         pos = pos + vels*self.dtime
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*self.dtime) , rots.clone())
         return pos, rots, vels, rvels

@@ -90,7 +90,8 @@ class SuperTrackTrainer(RLTrainer):
         self.first_update = True
 
         self.update_buffer : STBuffer = STBuffer(buffer_size=self.hyperparameters.buffer_size)
-        self.wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
+        # self.wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
+        self.wm_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product(PDTargetPrefix, PDTargetSuffix), STSingleBufferKey.RAW_OBS_DEBUG]
         self.policy_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product([PDTargetPrefix.PRE], PDTargetSuffix)]
 
 

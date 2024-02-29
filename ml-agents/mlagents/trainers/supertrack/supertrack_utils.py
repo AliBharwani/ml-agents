@@ -25,6 +25,7 @@ MINIMUM_TRAJ_LEN = 48
 class STSingleBufferKey(enum.Enum):
     IDX_IN_TRAJ = "idx_in_traj"
     TRAJ_LEN = "traj_len"
+    RAW_OBS_DEBUG = "raw_obs_debug"
 
 class PDTargetPrefix(enum.Enum):
     PRE = "pre"
@@ -138,6 +139,7 @@ class SuperTrackDataField():
             current_attr = getattr(self, attr)
             current_attr.to(device)
 
+import pdb
 
 class SupertrackUtils:
 
@@ -161,6 +163,7 @@ class SupertrackUtils:
         """
         # Gives us a list of tensors of shape [(pos, rots, etc) of len batch_size ]
         sim_inputs = [st_datum.sim_char_state.values() for st_datum in st_data]
+        pdb.set_trace()
         # Convert them to [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
         sim_inputs = [torch.stack(t) for t in zip(*sim_inputs)]
         # SupertrackUtils.local expects tensors in the shape [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
