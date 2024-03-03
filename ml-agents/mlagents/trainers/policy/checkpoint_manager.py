@@ -11,6 +11,7 @@ logger = get_logger(__name__)
 @attr.s(auto_attribs=True)
 class ModelCheckpoint:
     steps: int
+    training_iterations: Optional[int]
     file_path: str
     reward: Optional[float]
     creation_time: float

@@ -97,6 +97,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.world_model_optimzer = torch.optim.Adam(self._world_model.parameters(), lr=self.wm_lr)
         self._world_model.train()
 
+    def export_world_model(self, output_filepath : str):
+        final_export_path = self._world_model.export(output_filepath)
+        self.logger.info(f"Exported {output_filepath}")
+        return final_export_path
+
     def set_actor_gpu_to_optimizer(self):
         policy_optimizer_state = self.policy_optimizer.state_dict()
         self.policy_optimizer = torch.optim.Adam(self.actor_gpu.parameters(), lr=self.policy_lr)
@@ -109,7 +114,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             if self.split_actor_devices:
                 cur_actor = self.actor_gpu
             self.logger.debug(f"POLICY DEVICE: {next(cur_actor.parameters()).device}")
-
+        
+        self._world_model.train()
         suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
         positions, rotations, vels, rot_vels, heights, up_dir = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]
         kin_rot_t, kin_rvel_t = batch[(PDTargetPrefix.POST, PDTargetSuffix.ROT)], batch[(PDTargetPrefix.POST, PDTargetSuffix.RVEL)]

@@ -761,6 +761,22 @@ class GlobalSteps(nn.Module):
     def increment(self, value):
         self.__global_step += value
 
+class TrainingIterations(nn.Module):
+    def __init__(self, device = None):
+        super().__init__()
+        self.__training_iterations = nn.Parameter(
+            torch.tensor([0], device=device, dtype=torch.int64), requires_grad=False 
+        )
+        self.device = self.__training_iterations.device
+
+    @property
+    def current_training_iteration(self):
+        return int(self.__training_iterations.item())
+
+    @current_training_iteration.setter
+    def current_training_iteration(self, value):
+        self.__training_iterations[:] = value
+
 
 class LearningRate(nn.Module):
     def __init__(self, lr):

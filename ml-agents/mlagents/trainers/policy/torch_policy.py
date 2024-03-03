@@ -11,7 +11,7 @@ from mlagents_envs.base_env import DecisionSteps, BehaviorSpec
 from mlagents_envs.timers import timed
 
 from mlagents.trainers.settings import NetworkSettings
-from mlagents.trainers.torch_entities.networks import Actor, GlobalSteps
+from mlagents.trainers.torch_entities.networks import Actor, GlobalSteps, TrainingIterations
 
 from mlagents.trainers.torch_entities.utils import ModelUtils
 
@@ -44,7 +44,9 @@ class TorchPolicy(Policy):
         self.global_step = (
             GlobalSteps(device=device)
         )  # could be much simpler if TorchPolicy is nn.Module
-
+        self.training_iterations = (
+            TrainingIterations(device=device)
+        )
         # self.stats_name_to_update_name = {
         #     "Losses/Value Loss": "value_loss",
         #     "Losses/Policy Loss": "policy_loss",
@@ -147,6 +149,13 @@ class TorchPolicy(Policy):
             outputs=run_out,
             agent_ids=list(decision_requests.agent_id),
         )
+    
+    def get_current_training_iteration(self):
+        return self.training_iterations.current_training_iteration
+    
+    def set_current_training_iteration(self, value):
+        self.training_iterations.current_training_iteration = value
+        return self.training_iterations.current_training_iteration
 
     def get_current_step(self):
         """
@@ -181,4 +190,4 @@ class TorchPolicy(Policy):
         return copy.deepcopy(self.actor.state_dict())
 
     def get_modules(self):
-        return {"Policy": self.actor, "global_step": self.global_step}
+        return {"Policy": self.actor, "global_step": self.global_step, "training iterations": self.training_iterations}

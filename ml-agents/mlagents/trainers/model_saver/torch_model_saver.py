@@ -127,14 +127,15 @@ class TorchModelSaver(BaseModelSaver):
                 logger.warning(f"Module loading error : {err}")
 
         if reset_global_steps:
+            logger.info(f"Successfully loaded from {load_path} with step {policy.get_current_step()} training iteration {policy.get_current_training_iteration()}")
             policy.set_step(0)
             logger.info(
-                "Starting training from step 0 and saving to {}.".format(
+                "Starting training from step 0, training iteration 0 and saving to {}.".format(
                     self.model_path
                 )
             )
         else:
-            logger.info(f"Resuming training from step {policy.get_current_step()}.")
+            logger.info(f"Resuming training from step {policy.get_current_step()} training iteration {policy.get_current_training_iteration()}.")
 
     def copy_final_model(self, source_nn_path: str) -> None:
         """

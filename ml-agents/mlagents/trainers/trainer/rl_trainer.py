@@ -132,7 +132,7 @@ class RLTrainer(Trainer):
             return sum(rewards) / len(rewards)
 
     @timed
-    def _checkpoint(self) -> ModelCheckpoint:
+    def _checkpoint(self, addtl_paths = []) -> ModelCheckpoint:
         """
         Checkpoints the policy associated with this trainer.
         """
@@ -142,10 +142,12 @@ class RLTrainer(Trainer):
                 "Trainer has multiple policies, but default behavior only saves the first."
             )
         export_path, auxillary_paths = self.model_saver.save_checkpoint(
-            self.brain_name, self._step
+            self.brain_name, getattr(self, 'update_steps', self._step)
         )
+        auxillary_paths += addtl_paths
         new_checkpoint = ModelCheckpoint(
             int(self._step),
+            getattr(self, 'update_steps', None),
             export_path,
             self._policy_mean_reward(),
             time.time(),
@@ -211,7 +213,7 @@ class RLTrainer(Trainer):
         """
         Saves training statistics to Tensorboard.
         """
-        training_step = self.update_steps if self.update_steps else -1
+        training_step = self.update_steps if getattr(self, 'update_steps', None) else -1
         self.stats_reporter.add_stat("Is Training", float(self.should_still_train))
         self.stats_reporter.write_stats(int(step), training_step)
 

@@ -74,9 +74,7 @@ class SuperTrackTrainer(RLTrainer):
             SuperTrackSettings, trainer_settings.hyperparameters
         )
         self._step = 0
-
-         # Don't divide by zero
-        self.update_steps = 1
+        self.update_steps = 0
         self.steps_per_update = self.hyperparameters.steps_per_update
         self.max_update_iterations = self.hyperparameters.max_update_iterations
         self.checkpoint_replay_buffer = self.hyperparameters.save_replay_buffer
@@ -94,6 +92,8 @@ class SuperTrackTrainer(RLTrainer):
         self.policy_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product([PDTargetPrefix.PRE], PDTargetSuffix)]
 
 
+    # We need to delay initialization because the trainer is constructed in the main process but trains
+    # in a sub process, and if it is using CUDA then CUDA tensors should be initialized in the subprocess as well
     def _initialize(self, torch_settings: TorchSettings) -> None:
         self.optimizer._init_world_model()
         
@@ -101,6 +101,7 @@ class SuperTrackTrainer(RLTrainer):
         self.model_saver.register(self.optimizer)
         self.model_saver.initialize_or_load()
         self._step = self.policy.get_current_step()
+        self.update_steps = self.policy.get_current_training_iteration()
         if not default_device().type == "cuda":
             print(f"WARNING: SUPERTRACK IS NOT TRAINING ON GPU! DEVICE: {default_device()}")
         if self.multiprocess and default_device().type == "cuda":
@@ -116,7 +117,9 @@ class SuperTrackTrainer(RLTrainer):
         Writes a checkpoint model to memory
         Overrides the default to save the replay buffer.
         """
-        ckpt = super()._checkpoint()
+        output_filepath =  os.path.join(self.model_saver.model_path, f"WorldModel-{self.update_steps}")
+        final_export_path = self.optimizer.export_world_model(output_filepath)
+        ckpt = super()._checkpoint(addtl_paths=[final_export_path])
         if self.checkpoint_replay_buffer:
             self.save_replay_buffer()
         return ckpt
@@ -188,8 +191,6 @@ class SuperTrackTrainer(RLTrainer):
         Returns whether or not the trainer has enough elements to run update model
         :return: A boolean corresponding to whether or not _update_policy() can be run
         """
-        if self.trainer_settings.multiprocess_trainer:
-            return self._step >= self.hyperparameters.buffer_init_steps and not self.gpu_batch_queue.empty()
         return (
             self._has_enough_data_to_train()
             and self._step >= self.hyperparameters.buffer_init_steps
@@ -214,9 +215,7 @@ class SuperTrackTrainer(RLTrainer):
 
         # Needed to resume loads properly
         self._step = policy.get_current_step()
-        # Assume steps were updated at the correct ratio before
-        self.update_steps = int(max(1, self._step / self.steps_per_update))
-
+        
 
     def _update_policy(self, max_update_iterations : int = 512) -> bool:
         """
@@ -233,10 +232,10 @@ class SuperTrackTrainer(RLTrainer):
         num_update_iterations_possible = int(((self._step - self.hyperparameters.buffer_init_steps) / self.steps_per_update)) - self.update_steps + 1
         num_steps_to_update = min(max_update_iterations, num_update_iterations_possible)
         logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
-
+        
         while  (self.update_steps - update_steps_before) < max_update_iterations and (
             self._step - self.hyperparameters.buffer_init_steps
-        ) / self.update_steps > self.steps_per_update:
+        ) / max(1, self.update_steps) > self.steps_per_update:
             with nsys_profiler(f"iteration {self.update_steps - update_steps_before}", nsys_profiler_running):
                 with nsys_profiler("sample_mini_batch", nsys_profiler_running):
                     world_model_minibatch = self.update_buffer.sample_mini_batch(self.wm_batch_size, self.wm_window, key_list=self.wm_keylist)
@@ -263,6 +262,7 @@ class SuperTrackTrainer(RLTrainer):
                 self._stats_reporter.add_stat("Avg # Updates", num_updates, StatsAggregationMethod.AVERAGE)
             self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
             self.first_update = False
+            self.policy.set_current_training_iteration(self.update_steps)
             # copy policy to cpu 
             if self.multiprocess:
                 state_dict_copy = copy.deepcopy(self.optimizer.actor_gpu.state_dict())

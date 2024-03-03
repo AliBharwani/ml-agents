@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 from mlagents.trainers.settings import NetworkSettings
-from mlagents.torch_utils import torch, nn
+from mlagents.torch_utils import torch, nn, default_device
 from mlagents.trainers.torch_entities.layers import Initialization, LinearEncoder, linear_layer
 
 
@@ -39,3 +39,22 @@ class WorldModelNetwork(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return self.layers(inputs)
+    
+    def export(self, output_filepath: str): 
+        """
+        Exports self to .onnx format
+
+        :param output_filepath: file path to output the model (without file suffix)
+        """
+        onnx_output_path = f"{output_filepath}.onnx"
+        dummy_input = torch.randn(1, self.network_settings.input_size, device=default_device())
+
+        self.eval()
+        torch.onnx.export(
+            self,
+            dummy_input,
+            onnx_output_path,
+            input_names=["Sim character state and PD targets"],
+            output_names=["Local accels & rot accels"]
+        )
+        return onnx_output_path
