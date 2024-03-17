@@ -172,7 +172,7 @@ class SupertrackUtils:
         return torch.cat((*local_kin, *local_sim), dim=-1)
 
     @staticmethod
-    def extract_char_state(obs: Union[torch.tensor, np.ndarray], # obs is of shape [batch_size, TOTAL_OBS_LEN]
+    def extract_char_state(obs: Union[torch.tensor, np.ndarray], # obs is of shape [TOTAL_OBS_LEN]
                             idx: int, use_tensor: bool, pin_memory: bool = False, device = None) -> (CharState, int):
         if use_tensor:
             if device is None:

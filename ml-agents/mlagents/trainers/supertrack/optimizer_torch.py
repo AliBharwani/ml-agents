@@ -140,7 +140,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # We slice using [:, 1:, 1:, :] because we want to compute losses over the entire batch, skip the first window step (since that was not predicted by
         # the world model), and skip the root bone 
-        raw_pos_l, raw_vel_l, raw_rvel_l, raw_rot_l = self.char_state_loss(predicted_pos[:, 1:, 1:, :],
+        raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = self.char_state_loss(predicted_pos[:, 1:, 1:, :],
                                                     positions[:, 1:, 1:, :],
                                                     predicted_rots[:, 1:, 1:, :],
                                                     rotations[:, 1:, 1:, :],
