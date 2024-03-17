@@ -383,6 +383,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         conditional_sigma: bool = False,
         tanh_squash: bool = False,
         device: str = None,
+        clip_action: bool = True,
     ):
         super().__init__()
         # self.network_body = NetworkBody(observation_specs, network_settings)
@@ -408,7 +409,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             tanh_squash=tanh_squash,
             deterministic=network_settings.deterministic,
             init_near_zero=network_settings.init_near_zero,
-            noise_scale=.1
+            noise_scale=.1,
+            clip_action=clip_action,
         )
 
     @property
