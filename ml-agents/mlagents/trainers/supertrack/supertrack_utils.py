@@ -407,7 +407,8 @@ class SupertrackUtils:
         Removes root bone information as well
 
         Returns:
-            tensors of shape [..., NUM_T_BONES, 3/4]
+            tensors of shape [..., NUM_T_BONES * (3 or 4 or 6)] by default
+                             if unzip_to_batchsize is false: [..., NUM_T_BONES, 3 or 4 or 6] 
         """
         root_pos = cur_pos[..., 0:1 , :] # shape [..., 1, 3]
         inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :]) # shape [..., 1, 4]

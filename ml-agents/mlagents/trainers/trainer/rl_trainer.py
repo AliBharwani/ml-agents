@@ -283,12 +283,6 @@ class RLTrainer(Trainer):
         Steps the trainer, taking in trajectories and updates if ready.
         Will block and wait briefly if there are no trajectories.
         """
-
-        if profiling_enabled and self.profiler_state == ProfilerState.NOT_STARTED and self.update_steps > 10:
-            print(f"Starting cudart on update_step: {self.update_steps}")
-            torch.cuda.cudart().cudaProfilerStart()
-            self.profiler_state = ProfilerState.RUNNING
-
         processed_large_number_of_trajectories = False 
         with nsys_profiler("process_trajectory", self.profiler_state == ProfilerState.RUNNING):
             for traj_queue in self.trajectory_queues:

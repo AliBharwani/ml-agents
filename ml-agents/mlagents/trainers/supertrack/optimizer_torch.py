@@ -209,13 +209,13 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         don't want to compute loss with root bone
         """
         batch_size = pos.shape[0]
+        root_rot = rots[:, 0:1, :].clone()
         input = torch.cat((*SupertrackUtils.local(pos, rots, vels, rvels, heights, up_dir),
                             kin_rot_t.reshape(batch_size, -1),
                             kin_rvel_t.reshape(batch_size, -1)), dim = -1)
         output = self._world_model(input)
         local_accel, local_rot_accel = SupertrackUtils.split_world_model_output(output)
         # Convert to world space
-        root_rot = rots[:, 0:1, :].clone()
         accel = pyt.quaternion_apply(root_rot, local_accel) 
         rot_accel = pyt.quaternion_apply(root_rot, local_rot_accel)
 

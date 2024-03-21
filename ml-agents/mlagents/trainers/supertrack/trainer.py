@@ -226,7 +226,7 @@ class SuperTrackTrainer(RLTrainer):
         nsys_profiler_running = self.profiler_state == ProfilerState.RUNNING
         if self.max_update_iterations > 0:
             max_update_iterations =  self.max_update_iterations
-        if nsys_profiler_running: max_update_iterations = 10
+        # if nsys_profiler_running: max_update_iterations = 10
         batch_update_stats: Dict[str, list] = defaultdict(list)
         update_steps_before = self.update_steps
         num_update_iterations_possible = int(((self._step - self.hyperparameters.buffer_init_steps) / self.steps_per_update)) - self.update_steps + 1
@@ -255,20 +255,21 @@ class SuperTrackTrainer(RLTrainer):
                 self.update_steps += 1
                 has_updated = True
 
-        if has_updated:
-            logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Finished with updates")
-            num_updates = self.update_steps - update_steps_before
-            if max_update_iterations != 1:
-                self._stats_reporter.add_stat("Avg # Updates", num_updates, StatsAggregationMethod.AVERAGE)
-            self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
-            self.first_update = False
-            self.policy.set_current_training_iteration(self.update_steps)
-            # copy policy to cpu 
-            if self.multiprocess:
-                state_dict_copy = copy.deepcopy(self.optimizer.actor_gpu.state_dict())
-                for k, v in state_dict_copy.items():
-                    state_dict_copy[k] = v.detach().cpu()
-                self.policy.actor.load_state_dict(state_dict_copy)
+        with nsys_profiler("copy policy weights", nsys_profiler_running):
+            if has_updated:
+                logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Finished with updates")
+                num_updates = self.update_steps - update_steps_before
+                if max_update_iterations != 1:
+                    self._stats_reporter.add_stat("Avg # Updates", num_updates, StatsAggregationMethod.AVERAGE)
+                self._stats_reporter.set_stat("Num Training Updates", self.update_steps)
+                self.first_update = False
+                self.policy.set_current_training_iteration(self.update_steps)
+                # copy policy to cpu 
+                if self.multiprocess:
+                    state_dict_copy = copy.deepcopy(self.optimizer.actor_gpu.state_dict())
+                    for k, v in state_dict_copy.items():
+                        state_dict_copy[k] = v.detach().cpu()
+                    self.policy.actor.load_state_dict(state_dict_copy)
                 
         return has_updated
 

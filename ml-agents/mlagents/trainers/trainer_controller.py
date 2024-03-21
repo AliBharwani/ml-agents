@@ -8,6 +8,7 @@ from contextlib import nullcontext
 
 from typing import Dict, Set, List
 from collections import defaultdict
+from mlagents.trainers.supertrack.supertrack_utils import nsys_profiler
 from mlagents.trainers.trainer.rl_trainer import ProfilerState
 from mlagents_envs.base_env import BehaviorSpec
 import torch
@@ -283,10 +284,12 @@ class TrainerController:
 
     @timed
     def advance(self, env_manager: EnvManager) -> int:
+        profiler_running = self.torch_settings.profile and len(self.trainers) > 0 and list(self.trainers.values())[0].profiler_state == ProfilerState.RUNNING
         # Get steps
-        with hierarchical_timer("env_step"):
-            new_step_infos = env_manager.get_steps()
-            self._register_new_behaviors(env_manager, new_step_infos)
+        with nsys_profiler("env_step", profiler_running):
+            with hierarchical_timer("env_step"):
+                new_step_infos = env_manager.get_steps()
+                self._register_new_behaviors(env_manager, new_step_infos)
 
             num_steps = env_manager.process_steps(new_step_infos)
         # Report current lesson for each environment parameter
@@ -304,12 +307,17 @@ class TrainerController:
                 # For nsys profiling only, we want to profile how it performs reading a large number of trajectories
                 # So advance if we're not in profile mode 
                 # If we are in profile mode, only advance if we less than the number of warmup steps (5) or we have enough trajectories to profile
-                if not self.torch_settings.profile or (trainer.update_steps < 5 or self.trajectory_queue.qsize() > 100):
-                    if self.torch_settings.profile and trainer.update_steps >= 5:
-                        env_manager.close() # we don't care to profile the env manager
+                # if not self.torch_settings.profile or (trainer.update_steps < 5 or self.trajectory_queue.qsize() > 100):
+                #     if self.torch_settings.profile and trainer.update_steps >= 5:
+                #         env_manager.close() # we don't care to profile the env manager
+                if self.torch_settings.profile and trainer.profiler_state == ProfilerState.NOT_STARTED and trainer.update_steps > 10:
+                    print(f"Starting cudart on update_step: {trainer.update_steps}")
+                    torch.cuda.cudart().cudaProfilerStart()
+                    trainer.profiler_state = ProfilerState.RUNNING
+                with nsys_profiler("trainer_advance", self.torch_settings.profile and trainer.profiler_state == ProfilerState.RUNNING):
                     with hierarchical_timer("trainer_advance"):
                         trainer.advance(profiling_enabled = self.torch_settings.profile)
-                if self.torch_settings.profile and trainer.profiler_state == ProfilerState.RUNNING:
+                if profiler_running and trainer.update_steps > 20:
                     print(f"Stopping cudart on update_step: {trainer.update_steps}")
                     trainer.profiler_state = ProfilerState.STOPPED
                     torch.cuda.cudart().cudaProfilerStop()
@@ -390,14 +398,13 @@ class TrainerController:
             raise e
         try:
             while True:
-                    with hierarchical_timer("trainer_advance"):
-                        # if trainer.trainer_settings.multiprocess_trainer:
-                        #     _queried = trainer.advance_consumer()
-                        #     if not _queried:
-                        #         # Yield thread to avoid busy-waiting
-                        #         time.sleep(.0001)
-                        # else:
-                        trainer.advance()
+                    # if trainer.trainer_settings.multiprocess_trainer:
+                    #     _queried = trainer.advance_consumer()
+                    #     if not _queried:
+                    #         # Yield thread to avoid busy-waiting
+                    #         time.sleep(.0001)
+                    # else:
+                    trainer.advance()
         except(KeyboardInterrupt) as ex:
             logger.debug("Trainer process shutting down.")
         except Exception as ex:
