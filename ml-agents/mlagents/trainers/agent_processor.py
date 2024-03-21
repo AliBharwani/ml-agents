@@ -458,8 +458,7 @@ class AgentManagerQueue(Generic[T]):
         try:
             if self.use_simple_queue:
                 return self._queue.put(item)
-            # self._queue.put(item, block=block)
-            self._queue.put(item, block=False)
+            self._queue.put(item, block=block)
         except Exception as e:
             logger.error(f"failed to put item in queue: {e}")
 
@@ -495,8 +494,10 @@ class AgentManager(AgentProcessor):
         super().__init__(policy, behavior_id, stats_reporter, max_trajectory_length, process_trajectory_on_termination)
         # trajectory_queue_len = 20 if threaded or use_pytorch_mp else 0
         # For nsys profiling we want to allow infinite trajectory queue size and start profiling 
-        # after hitting a certain number of trajectories dynamically 
-        trajectory_queue_len = 0 if torch_settings.profile else 1024
+        # after hitting a certain number of trajectories dynamically
+        # Otherwise we want as many traj as it takes to completley rewrite the buffer
+        # For Supertrack, assuming 1 traj = 48 steps / entries, 150000 buffer size, 3072*48 ~= 150k  
+        trajectory_queue_len = 0 if torch_settings.profile else 3072
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
             self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, name = "trajectory_queue",  use_simple_queue=False #use_simple_queue=False
         )
