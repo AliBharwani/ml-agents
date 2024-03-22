@@ -27,7 +27,7 @@ class Trainer(abc.ABC):
         load: bool,
         artifact_path: str,
         reward_buff_cap: int = 1,
-        StatsReporterOverride = None,
+        stats_reporter_override = None,
         run_log_path = "",
     ):
         """
@@ -42,7 +42,7 @@ class Trainer(abc.ABC):
         self.trainer_settings = trainer_settings
         self._threaded = trainer_settings.threaded
         self._multiprocess = trainer_settings.use_pytorch_mp
-        self._stats_reporter = StatsReporterOverride or StatsReporter(brain_name) # Use override if given
+        self._stats_reporter = stats_reporter_override or StatsReporter(brain_name) # Use override if given
         self.is_training = training
         self.load = load
         self._reward_buffer: Deque[float] = deque(maxlen=reward_buff_cap)

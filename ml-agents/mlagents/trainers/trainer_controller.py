@@ -155,7 +155,7 @@ class TrainerController:
                 self.multiprocess = True
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
-                trainer = self.trainer_factory.generate(brain_name, StatsReporterMP(brain_name, stats_queue))
+                trainer = self.trainer_factory.generate(brain_name, stats_reporter_override=StatsReporterMP(brain_name, stats_queue))
                 trainer_process = mp.Process(target=TrainerController.trainer_process_update_func,
                                             args=(trainer, self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
                                             daemon=True, 

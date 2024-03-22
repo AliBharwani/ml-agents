@@ -55,7 +55,7 @@ class TrainerFactory:
         self.ghost_controller = GhostController()
         self.run_log_path = run_log_path
 
-    def generate(self, behavior_name: str, StatsReporterOverride = None) -> Trainer:
+    def generate(self, behavior_name: str, stats_reporter_override = None) -> Trainer:
         trainer_settings = self.trainer_config[behavior_name]
         return TrainerFactory._initialize_trainer(
             trainer_settings,
@@ -67,7 +67,7 @@ class TrainerFactory:
             self.seed,
             self.param_manager,
             self.multi_gpu,
-            StatsReporterOverride,
+            stats_reporter_override,
             self.run_log_path,
         )
 
@@ -82,7 +82,7 @@ class TrainerFactory:
         seed: int,
         param_manager: EnvironmentParameterManager,
         multi_gpu: bool = False,
-        StatsReporterOverride = None,
+        stats_reporter_override = None,
         run_log_path = "",
     ) -> Trainer:
         """
@@ -116,7 +116,7 @@ class TrainerFactory:
                 load_model,
                 seed,
                 trainer_artifact_path,
-                StatsReporterOverride=StatsReporterOverride,
+                stats_reporter_override=stats_reporter_override,
                 run_log_path=run_log_path,
             )
 

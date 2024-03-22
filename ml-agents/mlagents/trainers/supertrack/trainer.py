@@ -43,7 +43,7 @@ class SuperTrackTrainer(RLTrainer):
         load: bool,
         seed: int,
         artifact_path: str,
-        StatsReporterOverride = None,
+        stats_reporter_override = None,
         run_log_path = "",
     ):
         """
@@ -63,7 +63,7 @@ class SuperTrackTrainer(RLTrainer):
             load,
             artifact_path,
             reward_buff_cap,
-            StatsReporterOverride=StatsReporterOverride,
+            stats_reporter_override=stats_reporter_override,
             run_log_path=run_log_path,
         )
 
@@ -231,7 +231,7 @@ class SuperTrackTrainer(RLTrainer):
         update_steps_before = self.update_steps
         num_update_iterations_possible = int(((self._step - self.hyperparameters.buffer_init_steps) / self.steps_per_update)) - self.update_steps + 1
         num_steps_to_update = min(max_update_iterations, num_update_iterations_possible)
-        logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
+        # logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
         
         while  (self.update_steps - update_steps_before) < max_update_iterations and (
             self._step - self.hyperparameters.buffer_init_steps
@@ -257,7 +257,7 @@ class SuperTrackTrainer(RLTrainer):
 
         with nsys_profiler("copy policy weights", nsys_profiler_running):
             if has_updated:
-                logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Finished with updates")
+                # logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Finished with updates")
                 num_updates = self.update_steps - update_steps_before
                 if max_update_iterations != 1:
                     self._stats_reporter.add_stat("Avg # Updates", num_updates, StatsAggregationMethod.AVERAGE)
