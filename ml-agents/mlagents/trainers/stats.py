@@ -81,6 +81,7 @@ class StatsPropertyType(Enum):
     HYPERPARAMETERS = "hyperparameters"
     UNITY_JSON = "unity_json"
     SELF_PLAY = "selfplay"
+    LOSS_WEIGHTS = "loss_weights"
 
 
 class StatsWriter(abc.ABC):
@@ -230,6 +231,10 @@ class ConsoleWriter(StatsWriter):
         elif property_type == StatsPropertyType.SELF_PLAY:
             assert isinstance(value, bool)
             self.self_play = value
+        elif property_type == StatsPropertyType.LOSS_WEIGHTS:
+            title, text = value
+            logger.info(f"{title}{text}")
+
 
 
 class TensorboardWriter(StatsWriter):
@@ -313,12 +318,14 @@ class TensorboardWriter(StatsWriter):
     ) -> None:
         if property_type == StatsPropertyType.HYPERPARAMETERS:
             assert isinstance(value, dict)
-            summary = _dict_to_str(value, 0)
-            self._maybe_create_summary_writer(category)
-            if summary is not None:
-                self.summary_writers[category].add_text("Hyperparameters", summary)
-                self.summary_writers[category].flush()
+            tag, summary  = "Hyperparameters", _dict_to_str(value, 0)
+        elif property_type == StatsPropertyType.LOSS_WEIGHTS:
+            tag, summary = value
 
+        self._maybe_create_summary_writer(category)
+        if summary is not None:
+            self.summary_writers[category].add_text(tag, summary)
+            self.summary_writers[category].flush()
 
 class StatsReporterABC(abc.ABC):
 

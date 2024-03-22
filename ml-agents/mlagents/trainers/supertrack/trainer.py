@@ -6,6 +6,7 @@ from typing import Dict, Tuple, cast
 import os
 from mlagents.st_buffer import CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix, STBuffer
 
+from mlagents.trainers.stats import StatsPropertyType
 from mlagents.trainers.supertrack.supertrack_utils import STSingleBufferKey, SupertrackUtils, nsys_profiler
 from mlagents.trainers.trajectory import Trajectory
 
@@ -254,6 +255,14 @@ class SuperTrackTrainer(RLTrainer):
                     self._stats_reporter.add_stat(stat, np.mean(stat_list))
                 self.update_steps += 1
                 has_updated = True
+                if self.update_steps == 1: # First update has happened
+                    self._stats_reporter.add_property(
+                        StatsPropertyType.LOSS_WEIGHTS, ("Policy loss weights:" , self.optimizer.policy_loss_weights.to_str())
+                    )
+                    self._stats_reporter.add_property(
+                        StatsPropertyType.LOSS_WEIGHTS, ("World Model loss weights:" , self.optimizer.wm_loss_weights.to_str())
+                    )
+                    
 
         with nsys_profiler("copy policy weights", nsys_profiler_running):
             if has_updated:

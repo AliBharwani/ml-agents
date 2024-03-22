@@ -49,6 +49,13 @@ class DynamicLoss(nn.Module):
         self.wrvel_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
         self.initialized = nn.Parameter(torch.tensor(False), requires_grad=False)
 
+    def to_str(self):
+        return f"""
+                Pos: {self.wpos_loss.data}
+                Rot: {self.wrot_loss.data}
+                Vel: {self.wvel_loss.data}
+                Rvel: {self.wrvel_loss.data}"""
+
     def get_reweighted_losses(self, pos_loss, rot_loss, vel_loss, rvel_loss):
         if not self.initialized.item():
             total_loss = pos_loss + rot_loss + vel_loss + rvel_loss
@@ -70,7 +77,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     def __init__(self, policy: TorchPolicy, trainer_settings: TrainerSettings):
         super().__init__(policy, trainer_settings)
         self.trainer_settings = trainer_settings
-
         self.hyperparameters: SuperTrackSettings = cast(
             SuperTrackSettings, trainer_settings.hyperparameters
         )
