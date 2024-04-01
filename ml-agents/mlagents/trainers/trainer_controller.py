@@ -2,6 +2,7 @@
 # ## ML-Agent Learning
 """Launches trainers for each External Brains in a Unity Environment."""
 
+from multiprocessing import Value
 import os
 import threading
 from contextlib import nullcontext
@@ -156,8 +157,9 @@ class TrainerController:
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, stats_reporter_override=StatsReporterMP(brain_name, stats_queue))
+                # training_active = mp.Value("b", True)
                 trainer_process = mp.Process(target=TrainerController.trainer_process_update_func,
-                                            args=(trainer, self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
+                                            args=(trainer, [], self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
                                             daemon=True, 
                                             name=f"trainer_process")
                 stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers,), daemon=True, name=f"stats_reporter_process")
@@ -383,7 +385,7 @@ class TrainerController:
 
 
     @staticmethod
-    def trainer_process_update_func(trainer: Trainer, torch_settings: TorchSettings,  behavior_spec : BehaviorSpec, log_level: int = logging_util.INFO) -> None:
+    def trainer_process_update_func(trainer: Trainer, training_active, torch_settings: TorchSettings,  behavior_spec : BehaviorSpec, log_level: int = logging_util.INFO) -> None:
         # Set log level. On some platforms, the logger isn't common with the
         # main process, so we need to set it again.
         logging_util.set_log_level(log_level)
@@ -405,6 +407,9 @@ class TrainerController:
                     #         time.sleep(.0001)
                     # else:
                     trainer.advance()
+
+                    # Before we set "training_active" to False, we need to make sure the traj_queue is emptied. 
+                    # Otherwise, the main process could be blocked on that and not exit properly
         except(KeyboardInterrupt) as ex:
             logger.debug("Trainer process shutting down.")
         except Exception as ex:
@@ -416,4 +421,5 @@ class TrainerController:
             logger.debug("Saving model")
             trainer.save_model()
             del trainer.update_buffer
+            # training_active.value = False
             logger.info("Trainer process closing.")

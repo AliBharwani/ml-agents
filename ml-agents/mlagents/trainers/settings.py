@@ -651,6 +651,7 @@ class TrainerSettings(ExportableSettings):
     keep_checkpoints: int = 5
     checkpoint_interval: int = 500000
     max_steps: int = 500000
+    max_training_updates: int = 300000
     time_horizon: int = 64
     process_trajectory_on_termination : bool = False
     use_pytorch_mp : bool = False

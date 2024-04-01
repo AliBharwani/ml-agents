@@ -17,7 +17,6 @@ TOTAL_OBS_LEN = 720
 CHAR_STATE_LEN = 259
 NUM_BONES = 17
 NUM_T_BONES = 16 # Number of bones that have PD Motors (T = targets)
-ENTRIES_PER_BONE = 13
 POLICY_INPUT_LEN = 518
 POLICY_OUTPUT_LEN = 48
 MINIMUM_TRAJ_LEN = 48
@@ -301,8 +300,8 @@ class SupertrackUtils:
         pre_targets, idx = SupertrackUtils.extract_pd_targets_batched(inputs, idx, use_tensor, device=device, pin_memory=pin_memory)
         # Extract post_targets
         post_targets, idx = SupertrackUtils.extract_pd_targets_batched(inputs, idx, use_tensor, device=device, pin_memory=pin_memory)
-        if idx != TOTAL_OBS_LEN:
-            raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
+        # if idx != TOTAL_OBS_LEN:
+        #     raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
         return [SuperTrackDataField(
                 sim_char_state=sim_char_state[i], 
                 kin_char_state=kin_char_state[i],
@@ -324,8 +323,8 @@ class SupertrackUtils:
         pre_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
         # Extract post_targets
         post_targets, idx = SupertrackUtils.extract_pd_targets(obs, idx, use_tensor, pin_memory=pin_memory, device=device)
-        if idx != TOTAL_OBS_LEN:
-            raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
+        # if idx != TOTAL_OBS_LEN:
+        #     raise Exception(f'idx was {idx} expected {TOTAL_OBS_LEN}')
         if not return_as_keylist:
             return SuperTrackDataField(
                 sim_char_state=sim_char_state, 

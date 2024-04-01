@@ -11,7 +11,7 @@ import pytorch3d.transforms as pyt
 from mlagents.trainers.supertrack.supertrack_utils import  NUM_BONES, NUM_T_BONES, POLICY_INPUT_LEN, POLICY_OUTPUT_LEN, STSingleBufferKey, SupertrackUtils, nsys_profiler
 from mlagents.trainers.supertrack.world_model import WorldModelNetwork
 from mlagents.trainers.torch_entities.action_model import ActionModel
-from mlagents.trainers.torch_entities.layers import LinearEncoder
+from mlagents.trainers.torch_entities.layers import Initialization, LinearEncoder
 from mlagents.trainers.torch_entities.networks import Actor
 from mlagents_envs.base_env import ActionSpec, ObservationSpec
 from mlagents_envs.logging_util import get_logger
@@ -369,7 +369,10 @@ class PolicyNetworkBody(nn.Module):
         _layers += [LinearEncoder(
             self.network_settings.input_size,
             self.network_settings.num_layers,
-            self.network_settings.hidden_units)]
+            self.network_settings.hidden_units,
+            Initialization.KaimingHeNormal,
+            1,
+            network_settings.activation_function)]
         self.layers = nn.Sequential(*_layers)
 
     @property
@@ -482,7 +485,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
 
         supertrack_data = None
-        # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN]
+        # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN or NUM_OBS]
         policy_input = inputs[0]
         if not inputs_already_formatted:
             supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)

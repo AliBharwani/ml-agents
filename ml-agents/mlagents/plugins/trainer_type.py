@@ -1,5 +1,7 @@
 import sys
 from typing import Dict, Tuple, Any
+
+from mlagents.trainers.st_visualizer.trainer import STVisualizerTrainer
 # from mlagents.trainers.testtrainer import TestTrainer
 
 # importlib.metadata is new in python3.8
@@ -10,6 +12,7 @@ else:
     import importlib.metadata as importlib_metadata  # pylint: disable=E0611
 
 
+from mlagents.trainers import st_visualizer
 from mlagents_envs import logging_util
 from mlagents.plugins import ML_AGENTS_TRAINER_TYPE
 from mlagents.trainers.ppo.trainer import PPOTrainer
@@ -38,6 +41,7 @@ def get_default_trainer_types() -> Tuple[Dict[str, Any], Dict[str, Any]]:
             SACTrainer.get_trainer_name(): SACTrainer,
             POCATrainer.get_trainer_name(): POCATrainer,
             SuperTrackTrainer.get_trainer_name(): SuperTrackTrainer,
+            STVisualizerTrainer.get_trainer_name(): STVisualizerTrainer,
             # TestTrainer.get_trainer_name(): TestTrainer,
         }
     )
@@ -48,8 +52,7 @@ def get_default_trainer_types() -> Tuple[Dict[str, Any], Dict[str, Any]]:
             SACTrainer.get_trainer_name(): SACSettings,
             POCATrainer.get_trainer_name(): POCASettings,
             SuperTrackTrainer.get_trainer_name(): SuperTrackSettings,
-            # TestTrainer.get_trainer_name(): SuperTrackSettings,
-
+            STVisualizerTrainer.get_trainer_name(): SuperTrackSettings,
         }
     )
 
