@@ -28,6 +28,10 @@ from mlagents.trainers.torch_entities.agent_action import AgentAction
 
 class STVisualizationActor(SuperTrackPolicyNetwork):
 
+
+    nframes = 8
+    dtime = 1 / 60
+
     def __init__(
         self,
         observation_specs: List[ObservationSpec],
@@ -69,17 +73,23 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
         # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN]
         policy_input = inputs[0][:, :TOTAL_OBS_LEN] # This 
         world_model_data = inputs[0][0, TOTAL_OBS_LEN:]
-
+        # pdb.set_trace()
         supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
+        predicted_bone_pos, predicted_bone_rots = self.get_predictions_from_wm(supertrack_data, self.parse_world_model_data(world_model_data))
+        # flatten
+        final_flat_tensor = torch.cat((predicted_bone_pos, predicted_bone_rots), dim=2).reshape(-1)
         policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
         encoding = self.network_body(policy_input)
         action, log_probs, entropies, means = self.action_model(encoding, None) 
         run_out = {}
         # This is the clipped action which is not saved to the buffer
         # but is exclusively sent to the environment.
-        NUM_EXTRA_PADDING = 952 
+        # NUM_EXTRA_PADDING = 952 
         num_agents = action.continuous_tensor.shape[0]
-        final_tensor = torch.cat((action.continuous_tensor, torch.zeros(num_agents, NUM_EXTRA_PADDING)), dim=-1)
+        if num_agents != 1:
+            raise Exception("More than one agent not compatible with visualizer")
+        pdb.set_trace()
+        final_tensor = torch.cat((action.continuous_tensor, torch.unsqueeze(final_flat_tensor,0)), dim=-1)
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
         )
@@ -93,15 +103,12 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
         run_out["log_probs"] = log_probs
         run_out["entropy"] = entropies
 
-        # APPEND TO ACTION VECTOR
-
-
         return action, run_out, None
     
 
-    def parse_world_model_data(world_model_data): # shape [896]
-        nframes = 8
-        B = 1
+    def parse_world_model_data(self, world_model_data): # shape [952]
+        nframes = self.nframes
+        # B = 1
         root_poses = torch.empty(nframes, 3)
         root_rots = torch.empty(nframes, 4)
         pd_rots = torch.empty(nframes, NUM_T_BONES, 4)
@@ -117,7 +124,47 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
                 idx += 4
                 pd_rvels[i, j, :] = world_model_data[idx:idx+3]
                 idx += 3
+        return [root_poses, root_rots, pd_rots, pd_rvels]
         # Add batch dim
-        return [torch.unsqueeze(t) for t in [root_poses, root_rots, pd_rots, pd_rvels]]
-            
+        # return [torch.unsqueeze(t) for t in [root_poses, root_rots, pd_rots, pd_rvels]]
+    
+    def get_predictions_from_wm(self, st_data, world_model_data):
+        nframes = self.nframes
+        predicted_bone_poses = torch.empty(nframes, NUM_BONES, 3) 
+        predicted_bone_rots = torch.empty(nframes, NUM_BONES, 4) 
+        B = 1
 
+        groundtruth_root_poses, groundtruth_root_rots, pd_rots, pd_rvels = world_model_data
+
+        # Gives us a list of tensors of shape [(pos, rots, etc) of len batch_size ]
+        sim_inputs = [st_datum.sim_char_state.values() for st_datum in st_data]
+        # Convert them to [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
+        sim_state = [torch.stack(t) for t in zip(*sim_inputs)]
+        cur_kin_targets, pre_target_vels = st_data[0].post_targets.values()
+        cur_kin_targets, pre_target_vels = torch.unsqueeze(cur_kin_targets[1:, :], 0), torch.unsqueeze(pre_target_vels[1:, :], 0)
+        
+        for i in range(nframes):
+            # Predict next state with world model
+            pdb.set_trace()
+            next_sim_state = SupertrackUtils.integrate_through_world_model(self.world_model, self.dtime, *sim_state,
+                                                                pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
+                                                                pre_target_vels)
+            next_spos, next_srots, next_svels, next_srvels = next_sim_state
+            # Copy over ground truth spos / srots since world model does not predict world location
+            next_spos[:, 0] = groundtruth_root_poses[i]
+            next_srots[:, 0] = groundtruth_root_rots[i]
+            next_sim_h = torch.empty(B, NUM_BONES)
+            next_sim_h = torch.squeeze(next_spos[:, :, 1].clone()) # we select all batches, all bones, and the yth coordinate
+            
+            next_sim_updir = pyt.quaternion_apply(groundtruth_root_rots[i], torch.tensor([0, 1, 0], dtype=torch.float32)) 
+            next_sim_updir = torch.unsqueeze(next_sim_updir, 0)
+            # For the first prediciton, we use the data sent in the default "st_data" object
+            # For subsequent frames, we use the data sent over specifically for STVisualizer 
+            cur_kin_targets = torch.unsqueeze(pd_rots[i], 0) # select 0th kin targets 
+            pre_target_vels = torch.unsqueeze(pd_rvels[i], 0) # select 0th kin targets 
+            predicted_bone_poses[i, ...] = next_spos
+            predicted_bone_rots[i, ...] = next_srots
+            sim_state = next_spos, next_srots, next_svels, next_srvels, next_sim_h, next_sim_updir
+
+
+        return predicted_bone_poses, predicted_bone_rots

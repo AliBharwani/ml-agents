@@ -6,6 +6,7 @@ from mlagents.trainers.settings import NetworkSettings, OffPolicyHyperparamSetti
 import attr
 import pdb
 from mlagents.torch_utils import torch, nn, default_device
+from mlagents.trainers.supertrack import world_model
 import numpy as np
 import pytorch3d.transforms as pyt
 from mlagents.trainers.supertrack.supertrack_utils import  NUM_BONES, NUM_T_BONES, POLICY_INPUT_LEN, POLICY_OUTPUT_LEN, STSingleBufferKey, SupertrackUtils, nsys_profiler
@@ -137,7 +138,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for i in range(raw_window_size):
             # Take one step through world
-            next_predicted_values = self._integrate_through_world_model(*[t[:, i, ...] for t in world_model_tensors])
+            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *[t[:, i, ...] for t in world_model_tensors])
             # This overwrites the next window step with the root data of the current pos / rot, since we are updating everything 
             predicted_pos[:, i+1, ...], predicted_rots[:, i+1, ...], predicted_vels[:, i+1, ...], predicted_rot_vels[:, i+1, ...] = next_predicted_values
             # Copy over root pos and root rot, because world model does not update them
@@ -197,46 +198,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             raise Exception(f"Rots in unexpected shape: {rot1.shape}")
         
         return raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l
-    
-    def _integrate_through_world_model(self,
-                                    pos: torch.Tensor, # shape [batch_size, num_bones, 3]
-                                    rots: torch.Tensor, # shape [batch_size, num_bones, 4]
-                                    vels: torch.Tensor,  # shape [batch_size, num_bones, 3]
-                                    rvels: torch.Tensor, # shape [batch_size, num_bones, 3]
-                                    heights: torch.Tensor, # shape [batch_size, num_bones]
-                                    up_dir: torch.Tensor,  # shape [batch_size, 3]
-                                    kin_rot_t: torch.Tensor, # shape [batch_size, num_t_bones, 6] num_t_bones = 16 
-                                    kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
-                                    ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
-        """
-        Integrate a character state through the world model
-        Params should be in world space, and will be returned in world space.
-        :param exclude_root: Whether to exclude the root bone from the output, useful for training the policy since we 
-        don't want to compute loss with root bone
-        """
-        batch_size = pos.shape[0]
-        root_rot = rots[:, 0:1, :].clone()
-        input = torch.cat((*SupertrackUtils.local(pos, rots, vels, rvels, heights, up_dir),
-                            kin_rot_t.reshape(batch_size, -1),
-                            kin_rvel_t.reshape(batch_size, -1)), dim = -1)
-        output = self._world_model(input)
-        local_accel, local_rot_accel = SupertrackUtils.split_world_model_output(output)
-        # Convert to world space
-        accel = pyt.quaternion_apply(root_rot, local_accel) 
-        rot_accel = pyt.quaternion_apply(root_rot, local_rot_accel)
-
-        padding_for_root_bone = torch.zeros((batch_size, 1, 3))
-        accel = torch.cat((padding_for_root_bone, accel), dim=1)
-        rot_accel = torch.cat((padding_for_root_bone, rot_accel), dim=1)
-        # Integrate using Semi-Implicit Euler
-        # We use semi-implicit so the model can influence position and velocity losses for the first timestep
-        # Also that's what the paper does
-        vels = vels + accel*self.dtime
-        rvels = rvels + rot_accel*self.dtime 
-        pos = pos + vels*self.dtime
-        rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*self.dtime) , rots.clone())
-        return pos, rots, vels, rvels
-    
 
     def update_policy(self, batch: STBuffer, batch_size: int, raw_window_size: int, nsys_profiler_running: bool = False) -> Dict[str, float]:
         cur_actor = self.policy.actor
@@ -283,7 +244,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             # Compute PD targets
             cur_kin_targets = pyt.quaternion_multiply(pre_target_rots[:, i, ...], output)
             # Pass through world model
-            next_sim_state = self._integrate_through_world_model(*sim_state_window_step_i,
+            next_sim_state = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *sim_state_window_step_i,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
                                                                 pre_target_vels[:, i, ...])
             predicted_spos[:, i+1, ...], predicted_srots[:, i+1, ...], predicted_svels[:, i+1, ...], predicted_srvels[:, i+1, ...] = next_sim_state

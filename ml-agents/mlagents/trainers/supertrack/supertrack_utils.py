@@ -432,3 +432,42 @@ class SupertrackUtils:
         else:
             return return_tensors
         
+
+    def integrate_through_world_model(world_model: torch.nn.Module, dtime : float, 
+                                       pos: torch.Tensor, # shape [batch_size, num_bones, 3]
+                                    rots: torch.Tensor, # shape [batch_size, num_bones, 4]
+                                    vels: torch.Tensor,  # shape [batch_size, num_bones, 3]
+                                    rvels: torch.Tensor, # shape [batch_size, num_bones, 3]
+                                    heights: torch.Tensor, # shape [batch_size, num_bones]
+                                    up_dir: torch.Tensor,  # shape [batch_size, 3]
+                                    kin_rot_t: torch.Tensor, # shape [batch_size, num_t_bones, 6] num_t_bones = 16 
+                                    kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
+                                    ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
+        """
+        Integrate a character state through the world model
+        Params should be in world space, and will be returned in world space.
+        :param exclude_root: Whether to exclude the root bone from the output, useful for training the policy since we 
+        don't want to compute loss with root bone
+        """
+        batch_size = pos.shape[0]
+        root_rot = rots[:, 0:1, :].clone()
+        input = torch.cat((*SupertrackUtils.local(pos, rots, vels, rvels, heights, up_dir),
+                            kin_rot_t.reshape(batch_size, -1),
+                            kin_rvel_t.reshape(batch_size, -1)), dim = -1)
+        output = world_model(input)
+        local_accel, local_rot_accel = SupertrackUtils.split_world_model_output(output)
+        # Convert to world space
+        accel = pyt.quaternion_apply(root_rot, local_accel) 
+        rot_accel = pyt.quaternion_apply(root_rot, local_rot_accel)
+
+        padding_for_root_bone = torch.zeros((batch_size, 1, 3))
+        accel = torch.cat((padding_for_root_bone, accel), dim=1)
+        rot_accel = torch.cat((padding_for_root_bone, rot_accel), dim=1)
+        # Integrate using Semi-Implicit Euler
+        # We use semi-implicit so the model can influence position and velocity losses for the first timestep
+        # Also that's what the paper does
+        vels = vels + accel*dtime
+        rvels = rvels + rot_accel*dtime 
+        pos = pos + vels*dtime
+        rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*dtime) , rots.clone())
+        return pos, rots, vels, rvels
