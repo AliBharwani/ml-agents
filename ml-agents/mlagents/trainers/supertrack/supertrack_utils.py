@@ -14,10 +14,10 @@ from mlagents.trainers.torch_entities.utils import ModelUtils
 
 
 TOTAL_OBS_LEN = 720
-CHAR_STATE_LEN = 259
+# CHAR_STATE_LEN = 240
 NUM_BONES = 17
 NUM_T_BONES = 16 # Number of bones that have PD Motors (T = targets)
-POLICY_INPUT_LEN = 518
+POLICY_INPUT_LEN = 480
 POLICY_OUTPUT_LEN = 48
 MINIMUM_TRAJ_LEN = 48
 
@@ -78,7 +78,7 @@ class CharState():
     
     # @functools.cached_property
     def values(self):
-        return self.positions, self.rotations, self.velocities, self.rot_velocities, self.heights, self.up_dir
+        return self.positions, self.rotations, self.velocities, self.rot_velocities #, self.heights, self.up_dir
     
     def to_numpy(self):
         for attr in ['positions', 'rotations', 'velocities', 'rot_velocities', 'heights', 'up_dir']:
@@ -396,8 +396,8 @@ class SupertrackUtils:
             cur_rots: torch.Tensor, # shape [..., num_bones, 4]
             cur_vels: torch.Tensor,   # shape [..., num_bones, 3]
             cur_rot_vels: torch.Tensor, # shape [..., num_bones, 3]
-            cur_heights: torch.Tensor, # shape [..., num_bones]
-            cur_up_dir: torch.Tensor, # shape [..., 3]
+            # cur_heights: torch.Tensor, # shape [..., num_bones]
+            # cur_up_dir: torch.Tensor, # shape [..., 3]
             rots_as_twoaxis: bool = True,
             unzip_to_batchsize: bool = True,
             ): 
@@ -423,7 +423,7 @@ class SupertrackUtils:
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[..., 1:, :]) # shape [..., num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[..., 1:, :]) # shape [..., num_t_bones, 3]
 
-        return_tensors = [local_pos, local_rots, local_vels, local_rot_vels, cur_heights[..., 1:], cur_up_dir]
+        return_tensors = [local_pos, local_rots, local_vels, local_rot_vels]
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
         # Have to reshape instead of view because stride can be messed up in some cases
         if unzip_to_batchsize:
@@ -438,8 +438,8 @@ class SupertrackUtils:
                                     rots: torch.Tensor, # shape [batch_size, num_bones, 4]
                                     vels: torch.Tensor,  # shape [batch_size, num_bones, 3]
                                     rvels: torch.Tensor, # shape [batch_size, num_bones, 3]
-                                    heights: torch.Tensor, # shape [batch_size, num_bones]
-                                    up_dir: torch.Tensor,  # shape [batch_size, 3]
+                                    # heights: torch.Tensor, # shape [batch_size, num_bones]
+                                    # up_dir: torch.Tensor,  # shape [batch_size, 3]
                                     kin_rot_t: torch.Tensor, # shape [batch_size, num_t_bones, 6] num_t_bones = 16 
                                     kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
                                     ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
@@ -451,7 +451,7 @@ class SupertrackUtils:
         """
         batch_size = pos.shape[0]
         root_rot = rots[:, 0:1, :].clone()
-        input = torch.cat((*SupertrackUtils.local(pos, rots, vels, rvels, heights, up_dir),
+        input = torch.cat((*SupertrackUtils.local(pos, rots, vels, rvels),
                             kin_rot_t.reshape(batch_size, -1),
                             kin_rvel_t.reshape(batch_size, -1)), dim = -1)
         output = world_model(input)

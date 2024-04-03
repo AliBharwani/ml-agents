@@ -134,7 +134,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         predicted_rots = rotations.detach().clone()
         predicted_vels = vels.detach().clone()
         predicted_rot_vels = rot_vels.detach().clone()
-        world_model_tensors = [predicted_pos, predicted_rots, predicted_vels, predicted_rot_vels, heights, up_dir, kin_rot_t, kin_rvel_t]
+        # world_model_tensors = [predicted_pos, predicted_rots, predicted_vels, predicted_rot_vels, heights, up_dir, kin_rot_t, kin_rvel_t]
+        world_model_tensors = [predicted_pos, predicted_rots, predicted_vels, predicted_rot_vels, kin_rot_t, kin_rvel_t]
 
         for i in range(raw_window_size):
             # Take one step through world
@@ -216,13 +217,13 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         pre_target_rots, pre_target_vels = pre_target_rots[:, :, 1:, :], pre_target_vels[:, :, 1:, :]
 
         predicted_spos, predicted_srots, predicted_svels, predicted_srvels = [s.detach().clone() for s in ground_truth_sim_data]
-        sim_state =  [predicted_spos, predicted_srots, predicted_svels, predicted_srvels, s_h, s_up]
+        sim_state =  [predicted_spos, predicted_srots, predicted_svels, predicted_srvels]
 
         local_spos, local_srots, local_svels, local_srvels = [torch.empty(batch_size, raw_window_size, NUM_T_BONES, s.shape[-1]) for s in ground_truth_sim_data]
         local_srots = torch.empty(batch_size, raw_window_size, NUM_T_BONES, 6) # We will put two-axis rotations into this tensor
         local_sim = [local_spos, local_srots, local_svels, local_srvels]
 
-        local_kin = SupertrackUtils.local(k_pos, k_rots, k_vels, k_rvels, k_h, k_up)
+        local_kin = SupertrackUtils.local(k_pos, k_rots, k_vels, k_rvels)
 
         def get_tensor_at_window_step_i(t, i):
             return t[:, i, ...]
@@ -256,7 +257,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             local_sim_window_step_i = SupertrackUtils.local(*sim_state_window_step_i)
             # We've converted this steps output into local space, copy that over for loss computation
             # we do [:-2] because local_sim_window_step_i also contains s_h and s_up, which we don't need for loss
-            for local_sim_for_loss, local_sim_calculated in zip(local_sim, local_sim_window_step_i[:-2]):
+            for local_sim_for_loss, local_sim_calculated in zip(local_sim, local_sim_window_step_i):
                 local_sim_for_loss[:, i, ...] = local_sim_calculated.reshape(batch_size, NUM_T_BONES, -1)
 
         # Compute losses:
@@ -266,7 +267,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # We don't want to use the first window step because those were ground truth values (for local_kin data)
         # We don't need to filter out the root bone because SuperTrackUtils.local already does that
-        local_kpos, local_krots, local_kvels, local_krvels = [k.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] for k in local_kin[:-2]]
+        local_kpos, local_krots, local_kvels, local_krvels = [k.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] for k in local_kin]
         # pdb.set_trace()
         raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = self.char_state_loss(local_spos, 
                                                                         local_kpos,
@@ -451,8 +452,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         if not inputs_already_formatted:
             supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
             policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
-        if policy_input.shape[-1] != POLICY_INPUT_LEN:
-            raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
+        # if policy_input.shape[-1] != POLICY_INPUT_LEN:
+            # raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
         encoding = self.network_body(policy_input)
         action, log_probs, entropies, means = self.action_model(encoding, None) 
         run_out = {}
