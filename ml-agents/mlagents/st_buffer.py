@@ -260,23 +260,38 @@ class STBuffer(MutableMapping):
     ) -> None:
         """
         Appends this AgentBuffer to target_buffer
+
+        NOTE: Each PD target for a given step actually should be associated with the timestep BEFORE it. 
+        This is due to how I setup the Unity <> Python communication so I could recycle the existing observations/actions API
+
         :param target_buffer: The buffer which to append the samples to.
         """
         obs = trajectory.steps[0].obs
         if len(obs) != 1:
             raise Exception("Attempting to add trajectory with more than one observation to SuperTrack buffer", len(obs), obs)
-        
-        traj_len = len(trajectory.steps)
-        for step, exp in enumerate(trajectory.steps):
-            self[STSingleBufferKey.IDX_IN_TRAJ][self.effective_idx] = step
-            self[STSingleBufferKey.TRAJ_LEN][self.effective_idx] = traj_len
-            obs = exp.obs[0]
-            if (len(obs) != TOTAL_OBS_LEN):
-                raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
-            st_keylist = SupertrackUtils.parse_supertrack_data_field(obs, device=default_device(), use_tensor=True, return_as_keylist=True)
-            for key, value in st_keylist.items():
-                self[key][self.effective_idx] = value
+        key_is_pdtargets = lambda key: isinstance(key, tuple) and isinstance(key[0], PDTargetPrefix)
+        effective_traj_len = len(trajectory.steps) - 1
+        cur_obs = trajectory.steps[0].obs[0]
+        cur_keylist = SupertrackUtils.parse_supertrack_data_field(cur_obs, device=default_device(), use_tensor=True, return_as_keylist=True)
+
+        for traj_idx in range(effective_traj_len):
+
+            self[STSingleBufferKey.IDX_IN_TRAJ][self.effective_idx] = traj_idx 
+            self[STSingleBufferKey.TRAJ_LEN][self.effective_idx] = effective_traj_len
+
+            next_obs = trajectory.steps[traj_idx + 1].obs[0]
+            next_keylist = SupertrackUtils.parse_supertrack_data_field(next_obs, device=default_device(), use_tensor=True, return_as_keylist=True)
+            # Add PD Targets from next keylist 
+            for key, value in next_keylist.items():
+                if key_is_pdtargets(key):
+                    self[key][self.effective_idx] = value
+            # Add everything else from cur_keylist
+            for key, value in cur_keylist.items():
+                if not key_is_pdtargets(key):
+                    self[key][self.effective_idx] = value
+            cur_keylist = next_keylist
             self._cur_idx += 1
+
         # If we're in the stage of overwriting trajectories 
         if self._cur_idx > self._buffer_size: 
             # Check if the trajectory directly after the last one we added is still usuable 
@@ -286,6 +301,18 @@ class STBuffer(MutableMapping):
                 self.hole = [torch.tensor(self.effective_idx), end_idx]
             else: 
                 self.hole = None
+
+        # traj_len = len(trajectory.steps)
+        # for step, exp in enumerate(trajectory.steps):
+        #     self[STSingleBufferKey.IDX_IN_TRAJ][self.effective_idx] = step
+        #     self[STSingleBufferKey.TRAJ_LEN][self.effective_idx] = traj_len
+        #     obs = exp.obs[0]
+        #     if (len(obs) != TOTAL_OBS_LEN):
+        #         raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
+        #     st_keylist = SupertrackUtils.parse_supertrack_data_field(obs, device=default_device(), use_tensor=True, return_as_keylist=True)
+        #     for key, value in st_keylist.items():
+        #         self[key][self.effective_idx] = value
+        #     self._cur_idx += 1
 
     @property
     def effective_idx(self):
