@@ -167,7 +167,7 @@ class STBuffer(MutableMapping):
         return True
 
 
-    def sample_mini_batch(self, batch_size: int, raw_window_size: int, key_list: List[STBufferKey] = None, normalize_quat = True) -> "STBuffer":
+    def sample_mini_batch(self, batch_size: int, raw_window_size: int, key_list: List[STBufferKey] = None, normalize_quat = False) -> "STBuffer":
         """
         Creates a mini-batch
         """

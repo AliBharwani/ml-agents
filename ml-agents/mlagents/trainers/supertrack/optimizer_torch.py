@@ -181,7 +181,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         raw_pos_l = l1_norm(pos1, pos2) #torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2,3)))
         raw_vel_l = l1_norm(vel1, vel2) 
         raw_rvel_l = l1_norm(rvel1, rvel2)
-        # quat_diffs = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2)))
         batch_size, window_size, num_bones, num_entries = rot1.shape
         if num_entries == 4: # rots are in quat form
             quat_diffs = pyt.quaternion_multiply(rot1, pyt.quaternion_invert(rot2))

@@ -75,20 +75,21 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
         world_model_data = inputs[0][0, TOTAL_OBS_LEN:]
         # pdb.set_trace()
         supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
-        predicted_bone_pos, predicted_bone_rots = self.get_predictions_from_wm(supertrack_data, self.parse_world_model_data(world_model_data))
-        # flatten
-        final_flat_tensor = torch.cat((predicted_bone_pos, predicted_bone_rots), dim=2).reshape(-1)
         policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
         encoding = self.network_body(policy_input)
         action, log_probs, entropies, means = self.action_model(encoding, None) 
         run_out = {}
         # This is the clipped action which is not saved to the buffer
         # but is exclusively sent to the environment.
-        # NUM_EXTRA_PADDING = 952 
+
         num_agents = action.continuous_tensor.shape[0]
         if num_agents != 1:
             raise Exception("More than one agent not compatible with visualizer")
-        pdb.set_trace()
+        # pdb.set_trace()
+        parsed_wm_data = self.parse_world_model_data(world_model_data)
+        predicted_bone_pos, predicted_bone_rots = self.get_predictions_from_wm(supertrack_data, parsed_wm_data, action.continuous_tensor)
+        # flatten
+        final_flat_tensor = torch.cat((predicted_bone_pos, predicted_bone_rots), dim=2).reshape(-1)
         final_tensor = torch.cat((action.continuous_tensor, torch.unsqueeze(final_flat_tensor,0)), dim=-1)
         run_out["env_action"] = action.to_action_tuple(
             clip=self.action_model.clip_action
@@ -109,62 +110,86 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
     def parse_world_model_data(self, world_model_data): # shape [952]
         nframes = self.nframes
         # B = 1
-        root_poses = torch.empty(nframes, 3)
-        root_rots = torch.empty(nframes, 4)
+        # root_poses = torch.empty(nframes, 3)
+        # root_rots = torch.empty(nframes, 4)
+        k_pos = torch.empty(nframes, NUM_BONES, 3)
+        k_rot = torch.empty(nframes, NUM_BONES, 4)
+        k_vel = torch.empty(nframes, NUM_BONES, 3)
+        k_rvel = torch.empty(nframes, NUM_BONES, 3)
         pd_rots = torch.empty(nframes, NUM_T_BONES, 4)
         pd_rvels = torch.empty(nframes, NUM_T_BONES, 3)
-        idx = 0 
-        for i in range(nframes):
-            root_poses[i, :] = world_model_data[idx:idx+3]
-            idx += 3
-            root_rots[i, :] = world_model_data[idx:idx+4]
+        
+        cur_pd_rots = torch.empty(NUM_T_BONES, 4)
+        cur_pd_rvels = torch.empty(NUM_T_BONES, 3)
+        idx = 0
+        for i in range(NUM_T_BONES):
+            cur_pd_rots[i, :] = world_model_data[idx:idx+4]
             idx += 4
-            for j in range(NUM_T_BONES):
-                pd_rots[i, j, :] = world_model_data[idx:idx+4]
-                idx += 4
-                pd_rvels[i, j, :] = world_model_data[idx:idx+3]
+            cur_pd_rvels[i, :] = world_model_data[idx:idx+3]
+            idx += 3
+        
+        for frame in range(nframes):
+            k_pos[frame, 0, :] = world_model_data[idx:idx+3]
+            idx += 3
+            k_rot[frame, 0, :] = world_model_data[idx:idx+4]
+            idx += 4
+            for bone in range(NUM_T_BONES):
+                k_pos[frame, bone + 1, :] = world_model_data[idx:idx+3]
                 idx += 3
-        return [root_poses, root_rots, pd_rots, pd_rvels]
+                k_rot[frame, bone + 1, :] = world_model_data[idx:idx+4]
+                idx += 4
+                k_vel[frame, bone + 1, :] = world_model_data[idx:idx+4]
+                idx += 4
+                k_rvel[frame, bone + 1, :] = world_model_data[idx:idx+4]
+                idx += 4
+                pd_rots[frame, bone + 1, :] = world_model_data[idx:idx+4]
+                idx += 4
+                pd_rvels[frame, bone + 1, :] = world_model_data[idx:idx+3]
+                idx += 3
+        return [cur_pd_rots, cur_pd_rvels, k_pos, k_rot, k_vel, k_rvel, pd_rots, pd_rvels]
         # Add batch dim
         # return [torch.unsqueeze(t) for t in [root_poses, root_rots, pd_rots, pd_rvels]]
     
-    def get_predictions_from_wm(self, st_data, world_model_data):
+    def get_predictions_from_wm(self, st_data, world_model_data, policy_action):
         nframes = self.nframes
         predicted_bone_poses = torch.empty(nframes, NUM_BONES, 3) 
         predicted_bone_rots = torch.empty(nframes, NUM_BONES, 4) 
         B = 1
 
-        groundtruth_root_poses, groundtruth_root_rots, pd_rots, pd_rvels = world_model_data
+        cur_pd_rots, cur_pd_rvels, k_pos, k_rot, k_vel, k_rvel, pd_rots, pd_rvels = world_model_data
 
         # Gives us a list of tensors of shape [(pos, rots, etc) of len batch_size ]
         sim_inputs = [st_datum.sim_char_state.values() for st_datum in st_data]
         # Convert them to [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
         sim_state = [torch.stack(t) for t in zip(*sim_inputs)]
-        cur_kin_targets, pre_target_vels = st_data[0].post_targets.values()
-        cur_kin_targets, pre_target_vels = torch.unsqueeze(cur_kin_targets[1:, :], 0), torch.unsqueeze(pre_target_vels[1:, :], 0)
+        cur_kin_targets = SupertrackUtils.apply_policy_action_to_pd_targets(cur_pd_rots, policy_action, self.offset_scale)
         
         for i in range(nframes):
             # Predict next state with world model
-            pdb.set_trace()
+            # pdb.set_trace()
             next_sim_state = SupertrackUtils.integrate_through_world_model(self.world_model, self.dtime, *sim_state,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
-                                                                pre_target_vels)
+                                                                cur_pd_rvels)
             next_spos, next_srots, next_svels, next_srvels = next_sim_state
             # Copy over ground truth spos / srots since world model does not predict world location
-            next_spos[:, 0] = groundtruth_root_poses[i]
-            next_srots[:, 0] = groundtruth_root_rots[i]
-            next_sim_h = torch.empty(B, NUM_BONES)
-            next_sim_h = torch.squeeze(next_spos[:, :, 1].clone()) # we select all batches, all bones, and the yth coordinate
-            
-            next_sim_updir = pyt.quaternion_apply(groundtruth_root_rots[i], torch.tensor([0, 1, 0], dtype=torch.float32)) 
-            next_sim_updir = torch.unsqueeze(next_sim_updir, 0)
-            # For the first prediciton, we use the data sent in the default "st_data" object
-            # For subsequent frames, we use the data sent over specifically for STVisualizer 
-            cur_kin_targets = torch.unsqueeze(pd_rots[i], 0) # select 0th kin targets 
-            pre_target_vels = torch.unsqueeze(pd_rvels[i], 0) # select 0th kin targets 
-            predicted_bone_poses[i, ...] = next_spos
-            predicted_bone_rots[i, ...] = next_srots
-            sim_state = next_spos, next_srots, next_svels, next_srvels, next_sim_h, next_sim_updir
+            next_spos[:, 0] = k_pos[i, 0]
+            next_srots[:, 0] = k_rot[i, 0]
 
+            predicted_bone_poses[i, ...] = next_spos.detach().clone()
+            predicted_bone_rots[i, ...] = next_srots.detach().clone()
+            sim_state = next_spos, next_srots, next_svels, next_srvels
 
+            # Apply offsets from policy
+            pre_offset_pd_target_rots = pd_rots[i]
+            kin_state = k_pos[i], k_rot[i], k_vel[i], k_rvel[i]
+            offset = self.get_policy_action(sim_state, kin_state)
+
+            cur_kin_targets = SupertrackUtils.apply_policy_action_to_pd_targets(pre_offset_pd_target_rots, offset, self.offset_scale)
+            cur_pd_rvels = pd_rvels[i]
         return predicted_bone_poses, predicted_bone_rots
+    
+    def get_policy_action(self, sim_state, kin_state):
+        local_sim = SupertrackUtils.local(*sim_state) 
+        local_kin = SupertrackUtils.local(*kin_state)
+        # Not sure if I need to add batch dim before claling local...
+        return torch.cat((*local_kin, *local_sim), dim=-1)

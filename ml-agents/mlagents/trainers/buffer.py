@@ -462,37 +462,6 @@ class AgentBuffer(MutableMapping):
             mini_batch[key].set(list(itertools.chain.from_iterable(mb_list)))
         return mini_batch
     
-    @timed
-    def supertrack_sample_mini_batch(self, batch_size: int, raw_window_size: int, DEBUG_start_idxes) -> "AgentBuffer":
-        """
-        Creates a mini-batch with only the supertrack data field
-        """
-        mini_batch = AgentBuffer()
-        # We need to add 1 when sampling because first data point is only used for setting initial state, 
-        # not prediction / loss computation
-        window_size = raw_window_size + 1
-        buff_len = self.num_experiences
-        start_idxes = (
-            # Subtract window_size from buff_len because we want to make sure there are enough entries for a full window
-            # after the last start idx 
-            np.random.randint(0, (buff_len - window_size) // window_size , size=batch_size) * window_size
-        )
-        start_idxes = DEBUG_start_idxes
-        for i in start_idxes:
-            # make sure there are enough entries after this
-            num_steps_remaning =  self[BufferKey.TRAJ_LEN][i] - self[BufferKey.IDX_IN_TRAJ][i] # Usually we would subtract 1 from TRAJ_LEN, but i itself should count as 1
-            if num_steps_remaning < window_size:
-                num_steps_to_rewind = window_size - num_steps_remaning
-                if num_steps_to_rewind > self[BufferKey.IDX_IN_TRAJ][i]:
-                    raise Exception(f"Not enough data to rewind. Traj found with length {self[BufferKey.TRAJ_LEN][i]} - make sure min trajectory length is at least {window_size}")
-                i -= num_steps_to_rewind
-            mini_batch[BufferKey.SUPERTRACK_DATA].extend(self[BufferKey.SUPERTRACK_DATA][i : i + window_size])
-            mini_batch[BufferKey.IDX_IN_TRAJ].extend(self[BufferKey.IDX_IN_TRAJ][i : i + window_size])
-            mini_batch[BufferKey.TRAJ_LEN].extend(self[BufferKey.TRAJ_LEN][i : i + window_size])
-
-        return mini_batch
-
-
     def save_to_file(self, file_object: BinaryIO) -> None:
         """
         Saves the AgentBuffer to a file-like object.

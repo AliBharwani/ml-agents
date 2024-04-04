@@ -418,7 +418,8 @@ class SupertrackUtils:
         # modified inplace. You should replace the inplace operation by an out-of-place one
         local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [..., num_t_bones, 4]
         if rots_as_twoaxis:
-            local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [..., 6]
+            # local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [..., 6]
+            local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots)) # shape [..., 6]
 
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[..., 1:, :]) # shape [..., num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[..., 1:, :]) # shape [..., num_t_bones, 3]
@@ -442,7 +443,7 @@ class SupertrackUtils:
                                     # up_dir: torch.Tensor,  # shape [batch_size, 3]
                                     kin_rot_t: torch.Tensor, # shape [batch_size, num_t_bones, 6] num_t_bones = 16 
                                     kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
-                                    ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
+                                    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Integrate a character state through the world model
         Params should be in world space, and will be returned in world space.
@@ -471,3 +472,17 @@ class SupertrackUtils:
         pos = pos + vels*dtime
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*dtime) , rots.clone())
         return pos, rots, vels, rvels
+    
+
+    #  Unity code for applying offset:
+    #  Vector3 output = new Vector3(smoothedActions[idx++], smoothedActions[idx++], smoothedActions[idx++]);
+    #         Quaternion offset = MathUtils.quat_from_scaled_angle_axis(output * _config.alphaForExpMap);
+    #         finalRot = curRotations[i] * offset;
+    def apply_policy_action_to_pd_targets(pd_targets: torch.Tensor, # shape [NUM_T_BONES, 4]
+                                           policy_action: torch.Tensor, # shape [48]
+                                           offset_scale: float,
+                                            ):
+        policy_action = policy_action.reshape(NUM_T_BONES, 3) 
+        offset_as_quat = pyt.axis_angle_to_quaternion(policy_action * offset_scale)
+        kin_targets = pyt.quaternion_multiply(pd_targets, offset_as_quat)
+        return kin_targets
