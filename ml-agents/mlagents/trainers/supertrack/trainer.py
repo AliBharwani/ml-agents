@@ -230,8 +230,8 @@ class SuperTrackTrainer(RLTrainer):
         # if nsys_profiler_running: max_update_iterations = 10
         batch_update_stats: Dict[str, list] = defaultdict(list)
         update_steps_before = self.update_steps
-        num_update_iterations_possible = int(((self._step - self.hyperparameters.buffer_init_steps) / self.steps_per_update)) - self.update_steps + 1
-        num_steps_to_update = min(max_update_iterations, num_update_iterations_possible)
+        # num_update_iterations_possible = int(((self._step - self.hyperparameters.buffer_init_steps) / self.steps_per_update)) - self.update_steps + 1
+        # num_steps_to_update = min(max_update_iterations, num_update_iterations_possible)
         # logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
         
         while  (self.update_steps - update_steps_before) < max_update_iterations and (

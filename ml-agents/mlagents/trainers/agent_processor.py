@@ -497,7 +497,8 @@ class AgentManager(AgentProcessor):
         # after hitting a certain number of trajectories dynamically
         # Otherwise we want as many traj as it takes to completley rewrite the buffer
         # For Supertrack, assuming 1 traj = 48 steps / entries, 150000 buffer size, 3072*48 ~= 150k  
-        trajectory_queue_len = 0 if torch_settings.profile else 3072
+        # trajectory_queue_len = 0 if torch_settings.profile else 3072
+        trajectory_queue_len = 0 if torch_settings.profile else 1024
         self.trajectory_queue: AgentManagerQueue[Trajectory] = AgentManagerQueue(
             self._behavior_id, maxlen=trajectory_queue_len, use_pytorch_mp=use_pytorch_mp, name = "trajectory_queue",  use_simple_queue=False #use_simple_queue=False
         )
