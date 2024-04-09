@@ -398,7 +398,7 @@ class SupertrackUtils:
             cur_rot_vels: torch.Tensor, # shape [..., num_bones, 3]
             # cur_heights: torch.Tensor, # shape [..., num_bones]
             # cur_up_dir: torch.Tensor, # shape [..., 3]
-            rots_as_twoaxis: bool = True,
+            include_quat_rots: bool = False,
             unzip_to_batchsize: bool = True,
             ): 
         """
@@ -416,15 +416,18 @@ class SupertrackUtils:
         # RuntimeError: Output 0 of UnbindBackward0 is a view and its base or another view of its base has been modified inplace. 
         # This view is the output of a function that returns multiple views. Such functions do not allow the output views to be
         # modified inplace. You should replace the inplace operation by an out-of-place one
-        local_rots = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [..., num_t_bones, 4]
-        if rots_as_twoaxis:
+        local_rots_quat = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [..., num_t_bones, 4]
+        # if include_quat_rots:
+        #     quat_rots = local_rots.clone()
             # local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [..., 6]
-            local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots)) # shape [..., 6]
+        local_rots_6d = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots_quat)) # shape [..., 6]
 
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[..., 1:, :]) # shape [..., num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[..., 1:, :]) # shape [..., num_t_bones, 3]
 
-        return_tensors = [local_pos, local_rots, local_vels, local_rot_vels]
+        return_tensors = [local_pos, local_rots_6d, local_vels, local_rot_vels]
+        if include_quat_rots:
+            return_tensors += [local_rots_quat]
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
         # Have to reshape instead of view because stride can be messed up in some cases
         if unzip_to_batchsize:
@@ -473,6 +476,7 @@ class SupertrackUtils:
         vels = vels + accel*dtime
         rvels = rvels + rot_accel*dtime 
         pos = pos + vels*dtime
+        # Don't need to standardize because pyt.quaternion_multiply does by default 
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*dtime) , rots.clone())
         return pos, rots, vels, rvels
     
