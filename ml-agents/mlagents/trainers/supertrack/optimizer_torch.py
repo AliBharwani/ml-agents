@@ -129,11 +129,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # remove root bone from PDTargets 
         kin_rot_t, kin_rvel_t = kin_rot_t[:, :, 1:, :], kin_rvel_t[:, :, 1:, :] 
         kin_rot_t =  pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(kin_rot_t))
-
-        predicted_pos = positions.detach().clone() # shape [batch_size, window_size, num_bones, 3]
-        predicted_rots = rotations.detach().clone()
-        predicted_vels = vels.detach().clone()
-        predicted_rot_vels = rot_vels.detach().clone()
+        # Remove root bone data before copying over
+        predicted_pos = positions[:, :, 1:, :] .detach().clone() # shape [batch_size, window_size, num_bones, 3]
+        predicted_rots = rotations[:, :, 1:, :] .detach().clone()
+        predicted_vels = vels[:, :, 1:, :] .detach().clone()
+        predicted_rot_vels = rot_vels[:, :, 1:, :] .detach().clone()
         # world_model_tensors = [predicted_pos, predicted_rots, predicted_vels, predicted_rot_vels, heights, up_dir, kin_rot_t, kin_rvel_t]
         world_model_tensors = [predicted_pos, predicted_rots, predicted_vels, predicted_rot_vels, kin_rot_t, kin_rvel_t]
 
@@ -143,19 +143,19 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             # This overwrites the next window step with the root data of the current pos / rot, since we are updating everything 
             predicted_pos[:, i+1, ...], predicted_rots[:, i+1, ...], predicted_vels[:, i+1, ...], predicted_rot_vels[:, i+1, ...] = next_predicted_values
             # Copy over root pos and root rot, because world model does not update them
-            predicted_pos[:, i+1, 0, :] = positions[:, i+1, 0, :]
-            predicted_rots[:, i+1, 0, :] = rotations[:, i+1, 0, :]
+            # predicted_pos[:, i+1, 0, :] = positions[:, i+1, 0, :]
+            # predicted_rots[:, i+1, 0, :] = rotations[:, i+1, 0, :]
 
         # We slice using [:, 1:, 1:, :] because we want to compute losses over the entire batch, skip the first window step (since that was not predicted by
         # the world model), and skip the root bone 
         raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = self.char_state_loss(positions[:, 1:, 1:, :],
-                                                        predicted_pos[:, 1:, 1:, :],
+                                                        predicted_pos[:, 1:, :, :],
                                                         rotations[:, 1:, 1:, :],
-                                                        predicted_rots[:, 1:, 1:, :], 
+                                                        predicted_rots[:, 1:, :, :], 
                                                         vels[:, 1:, 1:, :], 
-                                                        predicted_vels[:, 1:, 1:, :], 
+                                                        predicted_vels[:, 1:, :, :], 
                                                         rot_vels[:, 1:, 1:, :],
-                                                        predicted_rot_vels[:, 1:, 1:, :])
+                                                        predicted_rot_vels[:, 1:, :, :])
         
         pos_loss, rot_loss, vel_loss, rvel_loss = self.wm_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l)
         loss = pos_loss + rot_loss + vel_loss + rvel_loss
@@ -210,12 +210,12 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             cur_actor = self.actor_gpu
         cur_actor.train()
         window_size = raw_window_size + 1
+        suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL]
+        # suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
+        s_pos, s_rots, s_vels, s_rvels = [batch[(CharTypePrefix.SIM, suffix)][:, :, 1:, :]  for suffix in suffixes]
+        ground_truth_sim_data = [s_pos, s_rots, s_vels, s_rvels] # shape [batch_size, window_size, num_t_bones, 3]
 
-        suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
-        s_pos, s_rots, s_vels, s_rvels, s_h, s_up = [batch[(CharTypePrefix.SIM, suffix)]  for suffix in suffixes]
-        ground_truth_sim_data = [s_pos, s_rots, s_vels, s_rvels] # shape [batch_size, window_size, num_bones, 3]
-
-        k_pos, k_rots, k_vels, k_rvels, k_h, k_up = [batch[(CharTypePrefix.KIN, suffix)] for suffix in suffixes]
+        k_pos, k_rots, k_vels, k_rvels = [batch[(CharTypePrefix.KIN, suffix)][:, :, 1:, :] for suffix in suffixes]
         pre_target_rots, pre_target_vels =  batch[(PDTargetPrefix.PRE, PDTargetSuffix.ROT)],  batch[(PDTargetPrefix.PRE, PDTargetSuffix.RVEL)] 
         # Remove root bone from PDTargets 
         pre_target_rots, pre_target_vels = pre_target_rots[:, :, 1:, :], pre_target_vels[:, :, 1:, :]
@@ -261,8 +261,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                 local_tensors = local_sim_window_step_i)
             predicted_spos[:, window_step_i+1, ...], predicted_srots[:, window_step_i+1, ...], predicted_svels[:, window_step_i+1, ...], predicted_srvels[:, window_step_i+1, ...] = next_sim_state
             # Copy over root pos and root rot, because world model does not update them
-            predicted_spos[:, window_step_i+1, 0, :] = s_pos[:, window_step_i+1, 0, :]
-            predicted_srots[:, window_step_i+1, 0, :] = s_rots[:, window_step_i+1, 0, :]
+            # predicted_spos[:, window_step_i+1, 0, :] = s_pos[:, window_step_i+1, 0, :]
+            # predicted_srots[:, window_step_i+1, 0, :] = s_rots[:, window_step_i+1, 0, :]
 
             sim_state_window_step_i =  [get_tensor_at_window_step_i(t, window_step_i + 1) for t in sim_state]
             # local_sim_window_step_i = SupertrackUtils.local(*sim_state_window_step_i)

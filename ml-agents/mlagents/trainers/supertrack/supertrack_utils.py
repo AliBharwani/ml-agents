@@ -160,13 +160,13 @@ class SupertrackUtils:
         """
         # Gives us a list of tensors of shape [(pos, rots, etc) of len batch_size ]
         sim_inputs = [st_datum.sim_char_state.values() for st_datum in st_data]
-        # Convert them to [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
-        sim_inputs = [torch.stack(t) for t in zip(*sim_inputs)]
+        # Convert them to [batch_size, num_t_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
+        sim_inputs = [torch.stack(t)[:, 1:, :] for t in zip(*sim_inputs)]
         # SupertrackUtils.local expects tensors in the shape [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
         local_sim = SupertrackUtils.local(*sim_inputs) # Shape is now [batch_size, local sim input size]
 
         kin_inputs = [st_datum.kin_char_state.values() for st_datum in st_data]
-        kin_inputs = [torch.stack(t) for t in zip(*kin_inputs)]
+        kin_inputs = [torch.stack(t)[:, 1:, :] for t in zip(*kin_inputs)]
         local_kin = SupertrackUtils.local(*kin_inputs)
         return torch.cat((*local_kin, *local_sim), dim=-1)
 
@@ -392,7 +392,7 @@ class SupertrackUtils:
         return result / torch.norm(result, dim=-1, keepdim=True)
 
     @staticmethod
-    def local(cur_pos: torch.Tensor, # shape [..., num_bones, 3]
+    def local(cur_pos: torch.Tensor, # shape [..., num_bones, 3] TESTING with num_t_bones for input tensors instead
             cur_rots: torch.Tensor, # shape [..., num_bones, 4]
             cur_vels: torch.Tensor,   # shape [..., num_bones, 3]
             cur_rot_vels: torch.Tensor, # shape [..., num_bones, 3]
@@ -411,19 +411,19 @@ class SupertrackUtils:
         """
         root_pos = cur_pos[..., 0:1 , :] # shape [..., 1, 3]
         inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :]) # shape [..., 1, 4]
-        local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos[..., 1:, :] - root_pos) # shape [..., num_t_bones, 3]
+        local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos - root_pos) # shape [..., num_t_bones, 3]
         # Have to clone quat rots to avoid 
         # RuntimeError: Output 0 of UnbindBackward0 is a view and its base or another view of its base has been modified inplace. 
         # This view is the output of a function that returns multiple views. Such functions do not allow the output views to be
         # modified inplace. You should replace the inplace operation by an out-of-place one
-        local_rots_quat = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [..., num_t_bones, 4]
+        local_rots_quat = pyt.quaternion_multiply(inv_root_rots, cur_rots.clone()) # shape [..., num_t_bones, 4]
         # if include_quat_rots:
         #     quat_rots = local_rots.clone()
             # local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [..., 6]
         local_rots_6d = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots_quat)) # shape [..., 6]
 
-        local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels[..., 1:, :]) # shape [..., num_t_bones, 3]
-        local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels[..., 1:, :]) # shape [..., num_t_bones, 3]
+        local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels) # shape [..., num_t_bones, 3]
+        local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels) # shape [..., num_t_bones, 3]
 
         return_tensors = [local_pos, local_rots_6d, local_vels, local_rot_vels]
         if include_quat_rots:
@@ -438,11 +438,11 @@ class SupertrackUtils:
         
 
     def integrate_through_world_model(world_model: torch.nn.Module, dtime : float, 
-                                       pos: torch.Tensor, # shape [batch_size, num_bones, 3]
-                                    rots: torch.Tensor, # shape [batch_size, num_bones, 4]
-                                    vels: torch.Tensor,  # shape [batch_size, num_bones, 3]
-                                    rvels: torch.Tensor, # shape [batch_size, num_bones, 3]
-                                    # heights: torch.Tensor, # shape [batch_size, num_bones]
+                                       pos: torch.Tensor, # shape [batch_size, num_bones, 3] [batch_size, num_t_bones, 3]
+                                    rots: torch.Tensor, # shape [batch_size, num_bones, 4]  batch_size, num_t_bones, 4]
+                                    vels: torch.Tensor,  # shape [batch_size, num_bones, 3] batch_size, num_t_bones, 3]
+                                    rvels: torch.Tensor, # shape [batch_size, num_bones, 3] batch_size, num_t_bones, 3]
+                                    # heights: torch.Tensor, # shape [batch_size, num_bones] batch_size, num_t_bones, 3]
                                     # up_dir: torch.Tensor,  # shape [batch_size, 3]
                                     kin_rot_t: torch.Tensor, # shape [batch_size, num_t_bones, 6] num_t_bones = 16 
                                     kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
@@ -450,7 +450,7 @@ class SupertrackUtils:
                                     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Integrate a character state through the world model
-        Params should be in world space by default (unless tensors_already_local = true), and will be returned in world space.
+        Params should be in world space and will be returned in world space.
         :param exclude_root: Whether to exclude the root bone from the output, useful for training the policy since we 
         don't want to compute loss with root bone
         """
@@ -467,9 +467,9 @@ class SupertrackUtils:
         accel = pyt.quaternion_apply(root_rot, local_accel) 
         rot_accel = pyt.quaternion_apply(root_rot, local_rot_accel)
 
-        padding_for_root_bone = torch.zeros((batch_size, 1, 3))
-        accel = torch.cat((padding_for_root_bone, accel), dim=1)
-        rot_accel = torch.cat((padding_for_root_bone, rot_accel), dim=1)
+        # padding_for_root_bone = torch.zeros((batch_size, 1, 3))
+        # accel = torch.cat((padding_for_root_bone, accel), dim=1)
+        # rot_accel = torch.cat((padding_for_root_bone, rot_accel), dim=1)
         # Integrate using Semi-Implicit Euler
         # We use semi-implicit so the model can influence position and velocity losses for the first timestep
         # Also that's what the paper does
