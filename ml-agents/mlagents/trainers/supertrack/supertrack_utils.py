@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 import enum
+import pdb
 from typing import List, Tuple, Union
 from mlagents.torch_utils import torch
 
@@ -417,6 +418,11 @@ class SupertrackUtils:
         # This view is the output of a function that returns multiple views. Such functions do not allow the output views to be
         # modified inplace. You should replace the inplace operation by an out-of-place one
         local_rots_quat = pyt.quaternion_multiply(inv_root_rots, cur_rots.clone()) # shape [..., num_t_bones, 4]
+        B = cur_pos.shape[:-2]
+        up_dir = torch.zeros(*B, 3, device=cur_rots.device)
+        # Set the Y component to 1
+        up_dir[..., 1] = 1.0
+        local_up_dir = pyt.quaternion_apply(inv_root_rots.squeeze(), up_dir)
         # if include_quat_rots:
         #     quat_rots = local_rots.clone()
             # local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [..., 6]
@@ -425,7 +431,7 @@ class SupertrackUtils:
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels) # shape [..., num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels) # shape [..., num_t_bones, 3]
 
-        return_tensors = [local_pos, local_rots_6d, local_vels, local_rot_vels]
+        return_tensors = [local_pos, local_rots_6d, local_vels, local_rot_vels, local_up_dir]
         if include_quat_rots:
             return_tensors.append(local_rots_quat)
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
