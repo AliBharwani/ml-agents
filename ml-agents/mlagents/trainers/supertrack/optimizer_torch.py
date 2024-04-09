@@ -241,23 +241,23 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for window_step_i in range(raw_window_size):
             # Predict PD offsets
-            # local_kin_at_window_step_i_plus_1 = [get_tensor_at_window_step_i(k, i + 1) for k in local_kin]
-            # input = torch.cat((*local_kin_at_window_step_i_plus_1, *local_sim_window_step_i), dim=-1)
-            local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, window_step_i) for k in local_kin]
-            input = torch.cat((*local_kin_at_window_step_i, *local_sim_window_step_i), dim=-1)
+            local_kin_at_window_step_i_plus_1 = [get_tensor_at_window_step_i(k, window_step_i + 1) for k in local_kin]
+            input = torch.cat((*local_kin_at_window_step_i_plus_1, *local_sim_window_step_i), dim=-1)
+            # local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, window_step_i) for k in local_kin]
+            # input = torch.cat((*local_kin_at_window_step_i, *local_sim_window_step_i), dim=-1)
 
             action, runout, _ = cur_actor.get_action_and_stats([input], inputs_already_formatted=True, return_means=True)
             all_means[:, window_step_i, :] = runout['means']
             output = action.continuous_tensor.reshape(batch_size, NUM_T_BONES, 3)
             output =  pyt.axis_angle_to_quaternion(output * self.offset_scale)
             # Compute PD targets
-            # cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, i + 1, ...])
-            cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i , ...])
+            cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i + 1, ...])
+            # cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i , ...])
             # Pass through world model
             next_sim_state = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *sim_state_window_step_i,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
-                                                                # pre_target_vels[:, i + 1, ...],
-                                                                pre_target_vels[:, window_step_i, ...],
+                                                                pre_target_vels[:, window_step_i + 1, ...],
+                                                                # pre_target_vels[:, window_step_i, ...],
                                                                 local_tensors = local_sim_window_step_i)
             predicted_spos[:, window_step_i+1, ...], predicted_srots[:, window_step_i+1, ...], predicted_svels[:, window_step_i+1, ...], predicted_srvels[:, window_step_i+1, ...] = next_sim_state
             # Copy over root pos and root rot, because world model does not update them
