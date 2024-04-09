@@ -413,20 +413,19 @@ class SupertrackUtils:
         root_pos = cur_pos[..., 0:1 , :] # shape [..., 1, 3]
         inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :]) # shape [..., 1, 4]
         local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos - root_pos) # shape [..., num_t_bones, 3]
-        # Have to clone quat rots to avoid 
-        # RuntimeError: Output 0 of UnbindBackward0 is a view and its base or another view of its base has been modified inplace. 
-        # This view is the output of a function that returns multiple views. Such functions do not allow the output views to be
-        # modified inplace. You should replace the inplace operation by an out-of-place one
-        local_rots_quat = pyt.quaternion_multiply(inv_root_rots, cur_rots.clone()) # shape [..., num_t_bones, 4]
         B = cur_pos.shape[:-2]
         up_dir = torch.zeros(*B, 3, device=cur_rots.device)
         # Set the Y component to 1
         up_dir[..., 1] = 1.0
         local_up_dir = pyt.quaternion_apply(inv_root_rots.squeeze(), up_dir)
-        # if include_quat_rots:
-        #     quat_rots = local_rots.clone()
-            # local_rots = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(SupertrackUtils.normalize_quat(local_rots))) # shape [..., 6]
-        local_rots_6d = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots_quat)) # shape [..., 6]
+        # Have to clone quat rots to avoid 
+        # RuntimeError: Output 0 of UnbindBackward0 is a view and its base or another view of its base has been modified inplace. 
+        # This view is the output of a function that returns multiple views. Such functions do not allow the output views to be
+        # modified inplace. You should replace the inplace operation by an out-of-place one
+        cur_rots[..., 1:, :] = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [..., num_t_bones, 4]
+        local_rots_quat = cur_rots
+
+        local_rots_6d = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots_quat.clone())) # shape [..., 6]
 
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels) # shape [..., num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels) # shape [..., num_t_bones, 3]
