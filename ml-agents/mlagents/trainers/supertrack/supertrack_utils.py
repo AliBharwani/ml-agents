@@ -427,7 +427,7 @@ class SupertrackUtils:
 
         return_tensors = [local_pos, local_rots_6d, local_vels, local_rot_vels]
         if include_quat_rots:
-            return_tensors += [local_rots_quat]
+            return_tensors.append(local_rots_quat)
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
         # Have to reshape instead of view because stride can be messed up in some cases
         if unzip_to_batchsize:

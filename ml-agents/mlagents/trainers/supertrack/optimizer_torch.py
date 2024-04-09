@@ -190,12 +190,17 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # diff * q1 = q2  --->  diff = q2 * inverse(q1)
         # https://stackoverflow.com/questions/21513637/dot-product-of-two-quaternion-rotations
         quat_diffs = pyt.quaternion_multiply(rot2, pyt.quaternion_invert(rot1))
-        vec_part = quat_diffs[..., 1:] # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
-        scalar_part = quat_diffs[..., 0:1] # The real/scalar part of a quaternion equals cos(angle/2) where angle is the angle of the quat
+        # vec_part = quat_diffs[..., 1:] # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
+        norms = torch.norm(quat_diffs[..., 1:], p=2, dim=-1, keepdim=True) # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
+        # scalar_part = quat_diffs[...,:1] # The real/scalar part of a quaternion equals cos(angle/2) where angle is the angle of the quat
         # We're basically breaking the quaternion down into the sin and cos values of its angle, and 
         # atan2() is a function that, given a cos and sin value for an angle, returns the angle between it and the unit vector (1, 0)
-        angles = 2 * torch.atan2(vec_part.norm(p=2, dim=-1), scalar_part.squeeze(-1))
+        angles = 2 * torch.atan2(norms, quat_diffs[..., :1])
         raw_rot_l = angles.abs().sum(dim=(1,2)).mean()
+
+        # batch_size, window_size, num_bones, num_entries = rot1.shape
+        # quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, window_size, num_bones, 3)
+        # raw_rot_l = l1_norm(None, None, c=quat_logs.abs())
 
         return raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l
 
@@ -270,10 +275,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                 else:
                     tensor_to_copy = local_sim_window_step_i[idx_into_list] # pos, vel, rvel 
                 predicted_local_sim_tensor_to_update[:, window_step_i, ...] = tensor_to_copy.reshape(batch_size, NUM_T_BONES, -1)
-                
-            # We've converted this steps output into local space, copy that over for loss computation
-            # for local_sim_for_loss, local_sim_calculated in zip(local_sim, local_sim_window_step_i):
-            #     local_sim_for_loss[:, i, ...] = local_sim_calculated.reshape(batch_size, NUM_T_BONES, -1)
 
         # Compute losses:
         # "The difference between this prediction [of simulated state] and the target
@@ -282,7 +283,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # We don't want to use the first window step because those were ground truth values (for local_kin data)
         # We don't need to filter out the root bone because SuperTrackUtils.local already does that
-        # local_kpos, local_krots, local_kvels, local_krvels = [k.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] for k in local_kin]
         reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] 
         local_kpos = reshape_local_kin_data(local_kin[0])
         local_krots = reshape_local_kin_data(local_kin_with_quat[-1])
@@ -311,7 +311,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                         "Policy/pos_loss": pos_loss.item(),
                         "Policy/rot_loss": rot_loss.item(),
                         "Policy/vel_loss": vel_loss.item(),
-                        "Policy/ang_loss": rvel_loss.item(),
+                        "Policy/rvel_loss": rvel_loss.item(),
                         "Policy/reg_loss": lreg.item(),
                         "Policy/sreg_loss": lsreg.item(),
                         "Policy/learning_rate": self.policy_lr}
