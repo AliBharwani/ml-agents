@@ -443,16 +443,19 @@ class SupertrackUtils:
                                     # up_dir: torch.Tensor,  # shape [batch_size, 3]
                                     kin_rot_t: torch.Tensor, # shape [batch_size, num_t_bones, 6] num_t_bones = 16 
                                     kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
+                                    local_tensors : Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] = None,
                                     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Integrate a character state through the world model
-        Params should be in world space, and will be returned in world space.
+        Params should be in world space by default (unless tensors_already_local = true), and will be returned in world space.
         :param exclude_root: Whether to exclude the root bone from the output, useful for training the policy since we 
         don't want to compute loss with root bone
         """
         batch_size = pos.shape[0]
         root_rot = rots[:, 0:1, :].clone()
-        input = torch.cat((*SupertrackUtils.local(pos, rots, vels, rvels),
+        if local_tensors is None:
+            local_tensors = SupertrackUtils.local(pos, rots, vels, rvels)
+        input = torch.cat((*local_tensors,
                             kin_rot_t.reshape(batch_size, -1),
                             kin_rvel_t.reshape(batch_size, -1)), dim = -1)
         output = world_model(input)
