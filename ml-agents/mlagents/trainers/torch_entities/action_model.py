@@ -187,10 +187,10 @@ class ActionModel(nn.Module):
             action_out_deprecated = continuous_out
             deterministic_continuous_out = dists.continuous.deterministic_sample()
             if self.clip_action:
-                continuous_out = torch.clamp(continuous_out, -3, 3)  # / 3
+                continuous_out = torch.clamp(continuous_out, -3, 3) / 3
                 action_out_deprecated = continuous_out
                 deterministic_continuous_out = (
-                    torch.clamp(deterministic_continuous_out, -3, 3) # / 3
+                    torch.clamp(deterministic_continuous_out, -3, 3) / 3
                 )
         if self.action_spec.discrete_size > 0 and dists.discrete is not None:
             discrete_out_list = [

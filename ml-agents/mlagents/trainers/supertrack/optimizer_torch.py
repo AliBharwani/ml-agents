@@ -403,6 +403,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             noise_scale=.1,
             clip_action=clip_action,
         )
+        self.highest_kin_vel = torch.tensor([0, 0, 0], dtype=torch.float32, device= torch.device("cpu"))
+        self.highest_sim_vel = torch.tensor([0, 0, 0], dtype=torch.float32, device= torch.device("cpu"))
 
     @property
     def memory_size(self) -> int:
@@ -471,6 +473,21 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         policy_input = inputs[0]
         if not inputs_already_formatted:
             supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
+            for st_data in supertrack_data:
+                for i in range(NUM_BONES):
+                    kin_vel = st_data.kin_char_state.velocities[i]
+                    sim_vel = st_data.sim_char_state.velocities[i]
+                    if torch.norm(kin_vel, p=2) > torch.norm(self.highest_kin_vel, p=2):
+                        print(f"New highest velocity at kin bone idx {i} : {kin_vel} , magnitude: {torch.norm(kin_vel, p=2)}")
+                        self.highest_kin_vel = kin_vel
+                    elif torch.norm(kin_vel, p=2) > 50:
+                        print(f"Aberrant kin vel at bone idx {i} : {kin_vel} , magnitude: {torch.norm(kin_vel, p=2)}")
+                    if torch.norm(sim_vel, p=2) > torch.norm(self.highest_sim_vel, p=2):
+                        print(f"New highest velocity at sim bone idx {i} : {sim_vel} , magnitude: {torch.norm(sim_vel, p=2)}")
+                        self.highest_sim_vel = sim_vel
+                    elif torch.norm(sim_vel, p=2) > 50:
+                        print(f"Aberrant sim vel at bone idx {i} : {sim_vel} , magnitude: {torch.norm(sim_vel, p=2)}")
+
             policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
         # if policy_input.shape[-1] != POLICY_INPUT_LEN:
             # raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
