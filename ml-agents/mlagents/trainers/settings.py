@@ -155,6 +155,7 @@ class NetworkSettings:
     memory: Optional[MemorySettings] = None
     goal_conditioning_type: ConditioningType = ConditioningType.HYPER
     deterministic: bool = parser.get_default("deterministic")
+    output_scale : float = 1.0
 
 
 @attr.s(auto_attribs=True)

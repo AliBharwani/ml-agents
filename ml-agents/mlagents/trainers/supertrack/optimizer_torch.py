@@ -33,7 +33,6 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     num_epoch: int = 3
     steps_per_update: float = 1
     save_replay_buffer: bool = False
-    offset_scale: float = 120.0
 
 
 def hn(x):
@@ -81,7 +80,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.hyperparameters: SuperTrackSettings = cast(
             SuperTrackSettings, trainer_settings.hyperparameters
         )
-        self.offset_scale = self.hyperparameters.offset_scale
         self.wm_lr = trainer_settings.world_model_network_settings.learning_rate
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
         self.first_wm_update = True
@@ -246,10 +244,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             # local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, window_step_i) for k in local_kin]
             # input = torch.cat((*local_kin_at_window_step_i, *local_sim_window_step_i), dim=-1)
 
-            action, runout, _ = cur_actor.get_action_and_stats([input], inputs_already_formatted=True, return_means=True)
-            all_means[:, window_step_i, :] = runout['means']
-            output = action.continuous_tensor.reshape(batch_size, NUM_T_BONES, 3)
-            output =  pyt.axis_angle_to_quaternion(output * self.offset_scale)
+            action, determinstic_action = cur_actor.get_action_during_training(input)
+            all_means[:, window_step_i, :] = determinstic_action
+            output = action.reshape(batch_size, NUM_T_BONES, 3)
+            output =  pyt.axis_angle_to_quaternion(output)
             # Compute PD targets
             cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i + 1, ...])
             # cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i , ...])
@@ -393,6 +391,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         # Could convert action_spec to class instead of tuple, but having the dependency that Unity action size == Python action size
         # is not a huge constraint
         # action_spec.continuous_size = network_settings.output_size
+        self.output_scale = network_settings.output_scale
         self.action_model = ActionModel(
             self.encoding_size,
             action_spec,
@@ -402,9 +401,10 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             init_near_zero=network_settings.init_near_zero,
             noise_scale=.1,
             clip_action=clip_action,
+            output_scale=self.output_scale,
         )
-        self.highest_kin_vel = torch.tensor([0, 0, 0], dtype=torch.float32, device= torch.device("cpu"))
-        self.highest_sim_vel = torch.tensor([0, 0, 0], dtype=torch.float32, device= torch.device("cpu"))
+        # self.highest_kin_vel = torch.tensor([0, 0, 0], dtype=torch.float32, device= torch.device("cpu"))
+        # self.highest_sim_vel = torch.tensor([0, 0, 0], dtype=torch.float32, device= torch.device("cpu"))
 
     @property
     def memory_size(self) -> int:
@@ -447,10 +447,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         inputs: List[torch.Tensor],
         masks: Optional[torch.Tensor] = None,
         memories: Optional[torch.Tensor] = None,
-        sequence_length: int = 1,
-        deterministic=False,
-        inputs_already_formatted=False,
-        return_means=False,
     ) -> Tuple[AgentAction, Dict[str, Any], torch.Tensor]:
         """
         Returns sampled actions.
@@ -459,56 +455,52 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :param masks: If using discrete actions, a Tensor of action masks.
         :param memories: If using memory, a Tensor of initial memories.
         :param sequence_length: If using memory, the sequence length.
-        :param deterministic: Whether to use deterministic actions.
-        :param inputs_already_formatted: Whether the inputs are already formatted.
-        :param return_means: Whether to return the means of the action distribution.
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """
         if (len(inputs) != 1):
             raise Exception(f"SuperTrack policy network body initialized with multiple observations: {len(inputs)} ")
 
-        supertrack_data = None
         # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN or NUM_OBS]
         policy_input = inputs[0]
-        if not inputs_already_formatted:
-            supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
-            for st_data in supertrack_data:
-                for i in range(NUM_BONES):
-                    kin_vel = st_data.kin_char_state.velocities[i]
-                    sim_vel = st_data.sim_char_state.velocities[i]
-                    if torch.norm(kin_vel, p=2) > torch.norm(self.highest_kin_vel, p=2):
-                        print(f"New highest velocity at kin bone idx {i} : {kin_vel} , magnitude: {torch.norm(kin_vel, p=2)}")
-                        self.highest_kin_vel = kin_vel
-                    elif torch.norm(kin_vel, p=2) > 50:
-                        print(f"Aberrant kin vel at bone idx {i} : {kin_vel} , magnitude: {torch.norm(kin_vel, p=2)}")
-                    if torch.norm(sim_vel, p=2) > torch.norm(self.highest_sim_vel, p=2):
-                        print(f"New highest velocity at sim bone idx {i} : {sim_vel} , magnitude: {torch.norm(sim_vel, p=2)}")
-                        self.highest_sim_vel = sim_vel
-                    elif torch.norm(sim_vel, p=2) > 50:
-                        print(f"Aberrant sim vel at bone idx {i} : {sim_vel} , magnitude: {torch.norm(sim_vel, p=2)}")
+        supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
+        policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
 
-            policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
-        # if policy_input.shape[-1] != POLICY_INPUT_LEN:
-            # raise Exception(f"SuperTrack policy network body forward called with policy input of length {policy_input.shape[-1]}, expected {POLICY_INPUT_LEN}")
         encoding = self.network_body(policy_input)
-        action, log_probs, entropies, means = self.action_model(encoding, None) 
+        action, log_probs, entropies, means = self.action_model(encoding, None, include_log_probs_entropies=True) 
         run_out = {}
         # This is the clipped action which is not saved to the buffer
         # but is exclusively sent to the environment.
-        run_out["env_action"] = action.to_action_tuple(
-            clip=self.action_model.clip_action
-        )
+        run_out["env_action"] = action.to_action_tuple(clip=self.action_model.clip_action,  output_scale=self.output_scale)
         # For some reason, sending CPU tensors causes the training to hang
         # This does not occur with CUDA tensors of numpy ndarrays
         # if supertrack_data is not None:
         #     run_out["supertrack_data"] = supertrack_data
-        if return_means:
-            run_out["means"] = means
         run_out["log_probs"] = log_probs
         run_out["entropy"] = entropies
-
         return action, run_out, None
+    
+    def get_action_during_training(
+        self,
+        inputs: torch.Tensor,
+    ) -> Tuple[AgentAction, Dict[str, Any], torch.Tensor]:
+        """
+        Returns sampled actions.
+        If memory is enabled, return the memories as well.
+        :param inputs: inputs of size [batch_size, POLICY_INPUT_LEN]
+        :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
+            Memories will be None if not using memory.
+        """
+
+        encoding = self.network_body(inputs)
+        (
+            cont_action_out,
+            _disc_action_out,
+            _action_out_deprecated,
+            deterministic_cont_action_out,
+            _deterministic_disc_action_out,
+        ) = self.action_model.get_action_out(encoding, None)
+        return cont_action_out, deterministic_cont_action_out
     
 
     def update_normalization(self, buffer) -> None:

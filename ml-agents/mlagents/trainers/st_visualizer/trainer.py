@@ -140,7 +140,6 @@ class STVisualizerTrainer(Trainer):
         # Give policy actor a copy of the world model on CPU
         cpu_world_model = copy.deepcopy(self.optimizer._world_model).to('cpu')
         policy.actor.world_model = cpu_world_model
-        policy.actor.offset_scale = self.trainer_settings.hyperparameters.offset_scale
 
         # Needed to resume loads properly
         self._step = policy.get_current_step()

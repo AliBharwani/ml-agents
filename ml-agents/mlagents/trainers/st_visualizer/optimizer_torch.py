@@ -162,7 +162,7 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
         sim_inputs = [st_datum.sim_char_state.values() for st_datum in st_data]
         # Convert them to [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
         sim_state = [torch.stack(t) for t in zip(*sim_inputs)]
-        cur_kin_targets = SupertrackUtils.apply_policy_action_to_pd_targets(cur_pd_rots, policy_action, self.offset_scale)
+        cur_kin_targets = SupertrackUtils.apply_policy_action_to_pd_targets(cur_pd_rots, policy_action)
         
         for i in range(nframes):
             # Predict next state with world model
@@ -184,7 +184,7 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
             kin_state = k_pos[i], k_rot[i], k_vel[i], k_rvel[i]
             offset = self.get_policy_action(sim_state, kin_state)
 
-            cur_kin_targets = SupertrackUtils.apply_policy_action_to_pd_targets(pre_offset_pd_target_rots, offset, self.offset_scale)
+            cur_kin_targets = SupertrackUtils.apply_policy_action_to_pd_targets(pre_offset_pd_target_rots, offset)
             cur_pd_rvels = pd_rvels[i]
         return predicted_bone_poses, predicted_bone_rots
     

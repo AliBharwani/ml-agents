@@ -492,9 +492,8 @@ class SupertrackUtils:
     #         finalRot = curRotations[i] * offset;
     def apply_policy_action_to_pd_targets(pd_targets: torch.Tensor, # shape [NUM_T_BONES, 4]
                                            policy_action: torch.Tensor, # shape [48]
-                                           offset_scale: float,
                                             ):
         policy_action = policy_action.reshape(NUM_T_BONES, 3) 
-        offset_as_quat = pyt.axis_angle_to_quaternion(policy_action * offset_scale)
+        offset_as_quat = pyt.axis_angle_to_quaternion(policy_action)
         kin_targets = pyt.quaternion_multiply(pd_targets, offset_as_quat)
         return kin_targets

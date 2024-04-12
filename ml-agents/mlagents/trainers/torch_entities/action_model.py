@@ -37,6 +37,7 @@ class ActionModel(nn.Module):
         init_near_zero: bool = False,
         noise_scale: float = 1,
         clip_action: float = True,
+        output_scale: float = 1.0,
     ):
         """
         A torch module that represents the action space of a policy. The ActionModel may contain
@@ -55,6 +56,7 @@ class ActionModel(nn.Module):
         self.action_spec = action_spec
         self._continuous_distribution = None
         self._discrete_distribution = None
+        self.output_scale = output_scale
 
         if self.action_spec.continuous_size > 0:
             self._continuous_distribution = GaussianDistribution(
@@ -188,10 +190,12 @@ class ActionModel(nn.Module):
             deterministic_continuous_out = dists.continuous.deterministic_sample()
             if self.clip_action:
                 continuous_out = torch.clamp(continuous_out, -3, 3) / 3
+                continuous_out *= self.output_scale
                 action_out_deprecated = continuous_out
                 deterministic_continuous_out = (
                     torch.clamp(deterministic_continuous_out, -3, 3) / 3
                 )
+                deterministic_continuous_out *= self.output_scale
         if self.action_spec.discrete_size > 0 and dists.discrete is not None:
             discrete_out_list = [
                 discrete_dist.exported_model_output()
@@ -218,7 +222,7 @@ class ActionModel(nn.Module):
         )
 
     def forward(
-        self, inputs: torch.Tensor, masks: torch.Tensor
+        self, inputs: torch.Tensor, masks: torch.Tensor, include_log_probs_entropies : bool = True,
     ) -> Tuple[AgentAction, ActionLogProbs, torch.Tensor]:
         """
         The forward method of this module. Outputs the action, log probs,
@@ -231,7 +235,9 @@ class ActionModel(nn.Module):
         dists = self._get_dists(inputs, masks)
         actions = self._sample_action(dists)
         means = dists.continuous.deterministic_sample() if dists.continuous is not None else None
-        log_probs, entropies = self._get_probs_and_entropy(actions, dists)
-        # Use the sum of entropy across actions, not the mean
-        entropy_sum = torch.sum(entropies, dim=1)
+        log_probs, entropy_sum = None, None
+        if include_log_probs_entropies:
+            log_probs, entropies = self._get_probs_and_entropy(actions, dists)
+            # Use the sum of entropy across actions, not the mean
+            entropy_sum = torch.sum(entropies, dim=1)
         return (actions, log_probs, entropy_sum, means)
