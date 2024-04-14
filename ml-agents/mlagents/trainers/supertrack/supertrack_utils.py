@@ -463,10 +463,13 @@ class SupertrackUtils:
         root_rot = rots[:, 0:1, :].clone()
         if local_tensors is None:
             local_tensors = SupertrackUtils.local(pos, rots, vels, rvels)
-        input = torch.cat((*local_tensors,
-                            kin_rot_t.reshape(batch_size, -1),
-                            kin_rvel_t.reshape(batch_size, -1)), dim = -1)
-        output = world_model(input)
+        # input = torch.cat((*local_tensors,
+        #                     kin_rot_t.reshape(batch_size, -1),
+        #                     kin_rvel_t.reshape(batch_size, -1)), dim = -1)
+        input = (*local_tensors,
+                    kin_rot_t.reshape(batch_size, -1),
+                    kin_rvel_t.reshape(batch_size, -1))
+        output = world_model(*input, update_normalizer=True)
         local_accel, local_rot_accel = SupertrackUtils.split_world_model_output(output)
         # Convert to world space
         accel = pyt.quaternion_apply(root_rot, local_accel) 

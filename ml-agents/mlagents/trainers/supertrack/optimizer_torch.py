@@ -467,11 +467,14 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
 
         encoding = self.network_body(policy_input)
-        action, log_probs, entropies, means = self.action_model(encoding, None, include_log_probs_entropies=True) 
+        # print(f"Encoding : {encoding}")
+        action, log_probs, entropies, _means = self.action_model(encoding, None, include_log_probs_entropies=True) 
         run_out = {}
         # This is the clipped action which is not saved to the buffer
         # but is exclusively sent to the environment.
         run_out["env_action"] = action.to_action_tuple(clip=self.action_model.clip_action,  output_scale=self.output_scale)
+        # print(f"Action: {action.continuous_tensor}")
+        # print(f"Env action: {run_out['env_action'].continuous}")
         # For some reason, sending CPU tensors causes the training to hang
         # This does not occur with CUDA tensors of numpy ndarrays
         # if supertrack_data is not None:
@@ -491,7 +494,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """
-
         encoding = self.network_body(inputs)
         (
             cont_action_out,
