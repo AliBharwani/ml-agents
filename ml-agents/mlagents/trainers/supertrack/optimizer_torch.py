@@ -7,6 +7,7 @@ import attr
 import pdb
 from mlagents.torch_utils import torch, nn, default_device
 from mlagents.trainers.supertrack import world_model
+from mlagents.trainers.torch_entities.encoders import Normalizer
 import numpy as np
 import pytorch3d.transforms as pyt
 from mlagents.trainers.supertrack.supertrack_utils import  NUM_BONES, NUM_T_BONES, POLICY_INPUT_LEN, POLICY_OUTPUT_LEN, STSingleBufferKey, SupertrackUtils, nsys_profiler
@@ -240,7 +241,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         for window_step_i in range(raw_window_size):
             # Predict PD offsets
             local_kin_at_window_step_i_plus_1 = [get_tensor_at_window_step_i(k, window_step_i + 1) for k in local_kin]
-            input = torch.cat((*local_kin_at_window_step_i_plus_1, *local_sim_window_step_i), dim=-1)
+            input = [*local_kin_at_window_step_i_plus_1, *local_sim_window_step_i]
             # local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, window_step_i) for k in local_kin]
             # input = torch.cat((*local_kin_at_window_step_i, *local_sim_window_step_i), dim=-1)
 
@@ -330,6 +331,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         return modules
     
 
+# POLICY_NORMALIZATION_SIZE = what do we want to normalize? local_pos, local_vels for sim and kin
+# = (NUM_T_BONES * (3+3))*2 ; for NUM_T_BONES = 16 => (16*6)*2 = 96 * 2 = 192
+POLICY_NORMALIZATION_SIZE = 192
 class PolicyNetworkBody(nn.Module):
     def __init__(
             self,
@@ -343,7 +347,8 @@ class PolicyNetworkBody(nn.Module):
         
         _layers = []
         # Used to normalize inputs
-        # if self.network_settings.normalize:
+        if self.network_settings.normalize:
+            self.normalizer = Normalizer(POLICY_NORMALIZATION_SIZE)
         #     _layers += [nn.LayerNorm(self.input_size)]
 
         _layers += [LinearEncoder(
@@ -359,7 +364,31 @@ class PolicyNetworkBody(nn.Module):
     def memory_size(self) -> int:
         return 0
 
-    def forward(self, inputs: torch.Tensor):
+    def forward(self, k_local_pos : torch.Tensor, # [batch_size, NUM_T_BONES * 3]
+            k_local_rots_6d: torch.Tensor,    # [batch_size, NUM_T_BONES * 6] 
+            k_local_vels: torch.Tensor,       # [batch_size, NUM_T_BONES * 3]
+            k_local_rot_vels: torch.Tensor,   # [batch_size, NUM_T_BONES * 3]
+            k_local_up_dir: torch.Tensor,     # [batch_size, 3]
+            s_local_pos : torch.Tensor,       # [batch_size, NUM_T_BONES * 3]
+            s_local_rots_6d: torch.Tensor,    # [batch_size, NUM_T_BONES * 6] 
+            s_local_vels: torch.Tensor,       # [batch_size, NUM_T_BONES * 3]
+            s_local_rot_vels: torch.Tensor,   # [batch_size, NUM_T_BONES * 3]
+            s_local_up_dir: torch.Tensor,     # [batch_size, 3]
+            update_normalizer: bool = False,
+    ) -> torch.Tensor:
+        normalizable_inputs = torch.cat((k_local_pos, k_local_vels, s_local_pos, s_local_vels), dim=-1)
+        if self.network_settings.normalize:
+            if update_normalizer:
+                self.normalizer.update(normalizable_inputs)
+            normalizable_inputs = self.normalizer(normalizable_inputs)
+        inputs = torch.cat((normalizable_inputs,
+            k_local_rots_6d,
+            k_local_rot_vels, 
+            k_local_up_dir,   
+            s_local_rots_6d,
+            s_local_rot_vels, 
+            s_local_up_dir,), dim=-1
+        )
         return self.layers(inputs)
 
 class SuperTrackPolicyNetwork(nn.Module, Actor):
@@ -413,7 +442,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
 
     def forward(
         self,
-        inputs: List[torch.Tensor],
+        inputs: torch.Tensor,
         masks: Optional[torch.Tensor] = None,
         memories: Optional[torch.Tensor] = None,
     ) -> Tuple[Union[int, torch.Tensor], ...]:
@@ -423,7 +452,53 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         At this moment, torch.onnx.export() doesn't accept None as tensor to be exported,
         so the size of return tuple varies with action spec.
         """
-        encoding = self.network_body(inputs[0])
+
+        # For SuperTrack, we have a special encoding. We never call forward directly, only get_action_and_stats 
+        # for actions during gym step generation and get_action_during_training for the action during train time
+        # So we just assume this forward is only being called to export the policy and it's easier to modify this
+        # then setup a new model serializer
+
+        dummy_obs = inputs
+
+        SIZE_POS = NUM_T_BONES * 3
+        SIZE_ROTS_6D = NUM_T_BONES * 6
+        SIZE_VELS = NUM_T_BONES * 3
+        SIZE_ROT_VELS = NUM_T_BONES * 3
+        SIZE_UP_DIR = 3
+        idx = 0
+        k_local_pos = dummy_obs[:, idx:idx + SIZE_POS]
+        idx += SIZE_POS
+        k_local_rots_6d = dummy_obs[:, idx:idx + SIZE_ROTS_6D]
+        idx += SIZE_ROTS_6D
+        k_local_vels = dummy_obs[:, idx:idx + SIZE_VELS]
+        idx += SIZE_VELS
+        k_local_rot_vels = dummy_obs[:, idx:idx + SIZE_ROT_VELS]
+        idx += SIZE_ROT_VELS
+        k_local_up_dir = dummy_obs[:, idx:idx + SIZE_UP_DIR]
+        idx += SIZE_UP_DIR
+        s_local_pos = dummy_obs[:, idx:idx + SIZE_POS]
+        idx += SIZE_POS
+        s_local_rots_6d = dummy_obs[:, idx:idx + SIZE_ROTS_6D]
+        idx += SIZE_ROTS_6D
+        s_local_vels = dummy_obs[:, idx:idx + SIZE_VELS]
+        idx += SIZE_VELS
+        s_local_rot_vels = dummy_obs[:, idx:idx + SIZE_ROT_VELS]
+        idx += SIZE_ROT_VELS
+        s_local_up_dir = dummy_obs[:, idx:idx + SIZE_UP_DIR]
+        idx += SIZE_UP_DIR
+
+        encoding = self.network_body(
+            k_local_pos,
+            k_local_rots_6d,
+            k_local_vels,
+            k_local_rot_vels,
+            k_local_up_dir,
+            s_local_pos,
+            s_local_rots_6d,
+            s_local_vels,
+            s_local_rot_vels,
+            s_local_up_dir
+        )
 
         (
             cont_action_out,
@@ -466,7 +541,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
         policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
 
-        encoding = self.network_body(policy_input)
+        encoding = self.network_body(*policy_input)
         # print(f"Encoding : {encoding}")
         action, log_probs, entropies, _means = self.action_model(encoding, None, include_log_probs_entropies=True) 
         run_out = {}
@@ -485,7 +560,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
     
     def get_action_during_training(
         self,
-        inputs: torch.Tensor,
+        inputs: List[torch.Tensor],
     ) -> Tuple[AgentAction, Dict[str, Any], torch.Tensor]:
         """
         Returns sampled actions.
@@ -494,7 +569,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """
-        encoding = self.network_body(inputs)
+        encoding = self.network_body(*inputs, update_normalizer=True)
         (
             cont_action_out,
             _disc_action_out,
@@ -506,5 +581,5 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
     
 
     def update_normalization(self, buffer) -> None:
-        pass # Not needed because we use layernorm
+        pass # Not needed because we use call our own updates through a kwarg during training
 

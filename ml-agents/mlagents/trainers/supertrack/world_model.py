@@ -38,9 +38,6 @@ class WorldModelNetwork(nn.Module):
 
         self.layers = nn.Sequential(*_layers)
 
-    # def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-    #     return self.layers(inputs)
-
     def forward(self, local_pos : torch.Tensor, # [batch_size, NUM_T_BONES * 3]
                 local_rots_6d: torch.Tensor,    # [batch_size, NUM_T_BONES * 6] 
                 local_vels: torch.Tensor,       # [batch_size, NUM_T_BONES * 3]
@@ -50,27 +47,18 @@ class WorldModelNetwork(nn.Module):
                 kin_rvel_t: torch.Tensor,       # [batch_size, NUM_T_BONES * 3]
                 update_normalizer: bool = False,
     ) -> torch.Tensor:
+        normalizable_inputs = torch.cat((local_pos, local_vels), dim=-1)
         if self.network_settings.normalize:
-            normalizable_inputs = torch.cat((local_pos, local_vels), dim=-1)
             if update_normalizer:
                 self.normalizer.update(normalizable_inputs)
             normalizable_inputs = self.normalizer(normalizable_inputs)
-            inputs = torch.cat((normalizable_inputs,
-                local_rots_6d,
-                local_rot_vels, 
-                local_up_dir,   
-                kin_rot_t,        
-                kin_rvel_t), dim=-1
-            )
-        else:
-            inputs = torch.cat((local_pos,
-                local_rots_6d,
-                local_vels,
-                local_rot_vels, 
-                local_up_dir,   
-                kin_rot_t,        
-                kin_rvel_t), dim=-1
-            )
+        inputs = torch.cat((normalizable_inputs,
+            local_rots_6d,
+            local_rot_vels, 
+            local_up_dir,   
+            kin_rot_t,        
+            kin_rvel_t), dim=-1
+        )
         return self.layers(inputs)
     
     def export(self, output_filepath: str): 

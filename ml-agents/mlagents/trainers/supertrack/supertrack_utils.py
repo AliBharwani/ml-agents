@@ -161,7 +161,7 @@ class SupertrackUtils:
         """
         # Gives us a list of tensors of shape [(pos, rots, etc) of len batch_size ]
         sim_inputs = [st_datum.sim_char_state.values() for st_datum in st_data]
-        # Convert them to [batch_size, num_t_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
+        # Convert them to [batch_size, num_t_bones, 3] for pos, [batch_size, num_t_bones, 4] for rots, etc
         sim_inputs = [torch.stack(t)[:, 1:, :] for t in zip(*sim_inputs)]
         # SupertrackUtils.local expects tensors in the shape [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
         local_sim = SupertrackUtils.local(*sim_inputs) # Shape is now [batch_size, local sim input size]
@@ -169,7 +169,7 @@ class SupertrackUtils:
         kin_inputs = [st_datum.kin_char_state.values() for st_datum in st_data]
         kin_inputs = [torch.stack(t)[:, 1:, :] for t in zip(*kin_inputs)]
         local_kin = SupertrackUtils.local(*kin_inputs)
-        return torch.cat((*local_kin, *local_sim), dim=-1)
+        return [*local_kin, *local_sim]
 
     @staticmethod
     def extract_char_state(obs: Union[torch.tensor, np.ndarray], # obs is of shape [TOTAL_OBS_LEN]

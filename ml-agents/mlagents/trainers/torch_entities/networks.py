@@ -624,8 +624,7 @@ class SimpleActor(nn.Module, Actor):
         return self.network_body.memory_size
 
     def update_normalization(self, buffer: AgentBuffer) -> None:
-        # self.network_body.update_normalization(buffer)
-        pass
+        self.network_body.update_normalization(buffer)
 
     def get_action_and_stats(
         self,
