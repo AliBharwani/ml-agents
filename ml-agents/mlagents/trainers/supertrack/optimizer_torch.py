@@ -1,4 +1,3 @@
-import json
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union, cast
 from mlagents.st_buffer import CharTypePrefix, CharTypeSuffix, PDTargetPrefix, PDTargetSuffix, STBuffer
 
@@ -265,8 +264,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             if self.hyperparameters.use_next_step_for_kin_training:
                 kin_idx += 1
             # Predict PD offsets
-            local_kin_at_window_step_i_plus_1 = [get_tensor_at_window_step_i(k, kin_idx) for k in local_kin]
-            input = [*local_kin_at_window_step_i_plus_1, *local_sim_window_step_i]
+            local_kin_at_kin_idx = [get_tensor_at_window_step_i(k, kin_idx) for k in local_kin]
+            input = [*local_kin_at_kin_idx , *local_sim_window_step_i]
 
             action, determinstic_action = cur_actor.get_action_during_training(input)
             all_means[:, window_step_i, :] = determinstic_action
@@ -302,7 +301,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # We don't want to use the first window step because those were ground truth values (for local_kin data)
         # We don't need to filter out the root bone because SuperTrackUtils.local already does that
-        reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] 
+        if self.hyperparameters.use_next_step_for_kin_training:
+            reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] 
+        else:
+            # We were predicting the corresponding kin_idx 
+            reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, :-1, ...] 
         local_kpos = reshape_local_kin_data(local_kin[0])
         local_krots = reshape_local_kin_data(local_kin_with_quat[-1])
         local_kvels = reshape_local_kin_data(local_kin[2])
