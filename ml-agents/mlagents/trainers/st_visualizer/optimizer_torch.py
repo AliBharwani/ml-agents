@@ -74,7 +74,7 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
         policy_input = inputs[0][:, :TOTAL_OBS_LEN] # This 
         world_model_data = inputs[0][0, TOTAL_OBS_LEN:]
         # pdb.set_trace()
-        supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
+        supertrack_data = SupertrackUtils.parse_supertrack_data_field(policy_input)
         policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
         encoding = self.network_body(policy_input)
         action, log_probs, entropies, means = self.action_model(encoding, None) 

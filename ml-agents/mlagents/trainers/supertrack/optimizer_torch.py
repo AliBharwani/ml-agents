@@ -35,6 +35,7 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     steps_per_update: float = 1
     save_replay_buffer: bool = False
     loss_weights_init_steps : int = 100
+    use_next_step_for_kin_training: bool = True
 
 
 def hn(x):
@@ -140,13 +141,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_optimizer.load_state_dict(policy_optimizer_state)
     
     def update_world_model(self, batch, raw_window_size: int) -> Dict[str, float]:
-        if self.first_wm_update:
-            self.logger.debug(f"WORLD MODEL DEVICE:  {next(self._world_model.parameters()).device}")
-            cur_actor = self.policy.actor
-            if self.split_actor_devices:
-                cur_actor = self.actor_gpu
-            self.logger.debug(f"POLICY DEVICE: {next(cur_actor.parameters()).device}")
-        
         self._world_model.train()
         suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
         positions, rotations, vels, rot_vels, heights, up_dir = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]
@@ -248,11 +242,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         pre_target_rots, pre_target_vels = pre_target_rots[:, :, 1:, :], pre_target_vels[:, :, 1:, :]
 
         predicted_spos, predicted_srots, predicted_svels, predicted_srvels = [s.detach().clone() for s in ground_truth_sim_data]
-        sim_state =  [predicted_spos, predicted_srots, predicted_svels, predicted_srvels]
+        predicted_global_sim_state =  [predicted_spos, predicted_srots, predicted_svels, predicted_srvels]
 
         predicted_local_spos, predicted_local_srots, predicted_local_svels, predicted_local_srvels = [torch.empty(batch_size, raw_window_size, NUM_T_BONES, s.shape[-1]) for s in ground_truth_sim_data]
         # local_srots = torch.empty(batch_size, raw_window_size, NUM_T_BONES, 6) # We will put two-axis rotations into this tensor
-        predicted_sim_state = [predicted_local_spos, predicted_local_srots, predicted_local_svels, predicted_local_srvels]
+        predicted_local_sim_state = [predicted_local_spos, predicted_local_srots, predicted_local_svels, predicted_local_srvels]
 
         local_kin_with_quat = SupertrackUtils.local(k_pos, k_rots, k_vels, k_rvels, include_quat_rots=True)
         local_kin = local_kin_with_quat[:-1]
@@ -262,41 +256,39 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         
         all_means = torch.empty(batch_size, raw_window_size, POLICY_OUTPUT_LEN)
 
-        sim_state_window_step_i =  [get_tensor_at_window_step_i(t, 0) for t in sim_state]
+        sim_state_window_step_i =  [get_tensor_at_window_step_i(t, 0) for t in predicted_global_sim_state]
         local_sim_window_step_i_w_quats = SupertrackUtils.local(*sim_state_window_step_i, include_quat_rots=True)
         local_sim_window_step_i = local_sim_window_step_i_w_quats[:-1]
 
         for window_step_i in range(raw_window_size):
+            kin_idx = window_step_i
+            if self.hyperparameters.use_next_step_for_kin_training:
+                kin_idx += 1
             # Predict PD offsets
-            local_kin_at_window_step_i_plus_1 = [get_tensor_at_window_step_i(k, window_step_i + 1) for k in local_kin]
+            local_kin_at_window_step_i_plus_1 = [get_tensor_at_window_step_i(k, kin_idx) for k in local_kin]
             input = [*local_kin_at_window_step_i_plus_1, *local_sim_window_step_i]
-            # local_kin_at_window_step_i = [get_tensor_at_window_step_i(k, window_step_i) for k in local_kin]
-            # input = torch.cat((*local_kin_at_window_step_i, *local_sim_window_step_i), dim=-1)
 
             action, determinstic_action = cur_actor.get_action_during_training(input)
             all_means[:, window_step_i, :] = determinstic_action
             output = action.reshape(batch_size, NUM_T_BONES, 3)
             output =  pyt.axis_angle_to_quaternion(output)
             # Compute PD targets
-            cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i + 1, ...])
-            # cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i , ...])
+            cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, kin_idx, ...])
             # Pass through world model
             next_sim_state = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *sim_state_window_step_i,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
-                                                                pre_target_vels[:, window_step_i + 1, ...],
-                                                                # pre_target_vels[:, window_step_i, ...],
+                                                                pre_target_vels[:, kin_idx, ...],
                                                                 local_tensors = local_sim_window_step_i)
             predicted_spos[:, window_step_i+1, ...], predicted_srots[:, window_step_i+1, ...], predicted_svels[:, window_step_i+1, ...], predicted_srvels[:, window_step_i+1, ...] = next_sim_state
             # Copy over root pos and root rot, because world model does not update them
             # predicted_spos[:, window_step_i+1, 0, :] = s_pos[:, window_step_i+1, 0, :]
             # predicted_srots[:, window_step_i+1, 0, :] = s_rots[:, window_step_i+1, 0, :]
 
-            sim_state_window_step_i =  [get_tensor_at_window_step_i(t, window_step_i + 1) for t in sim_state]
-            # local_sim_window_step_i = SupertrackUtils.local(*sim_state_window_step_i)
+            sim_state_window_step_i =  [get_tensor_at_window_step_i(t, window_step_i + 1) for t in predicted_global_sim_state]
             local_sim_window_step_i_w_quats = SupertrackUtils.local(*sim_state_window_step_i, include_quat_rots=True)
             local_sim_window_step_i = local_sim_window_step_i_w_quats[:-1]
             for idx_into_list in range(4):
-                predicted_local_sim_tensor_to_update = predicted_sim_state[idx_into_list]
+                predicted_local_sim_tensor_to_update = predicted_local_sim_state[idx_into_list]
                 if predicted_local_sim_tensor_to_update.shape[-1] == 4: # Handle rotations separately
                     tensor_to_copy = local_sim_window_step_i_w_quats[-1] # rot
                 else:
@@ -564,7 +556,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
 
         # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN or NUM_OBS]
         policy_input = inputs[0]
-        supertrack_data = SupertrackUtils.parse_supertrack_data_field_batched(policy_input)
+        supertrack_data = SupertrackUtils.parse_supertrack_data_field(policy_input)
         policy_input = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data)
 
         encoding = self.network_body(*policy_input)

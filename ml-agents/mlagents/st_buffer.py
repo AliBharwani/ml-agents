@@ -272,7 +272,7 @@ class STBuffer(MutableMapping):
         key_is_pdtargets = lambda key: isinstance(key, tuple) and isinstance(key[0], PDTargetPrefix)
         effective_traj_len = len(trajectory.steps) - 1
         cur_obs = trajectory.steps[0].obs[0]
-        cur_keylist = SupertrackUtils.parse_supertrack_data_field(cur_obs, device=default_device(), use_tensor=True, return_as_keylist=True)
+        cur_keylist = SupertrackUtils.parse_supertrack_data_field(cur_obs, device=default_device(), use_tensor=True)
 
         for traj_idx in range(effective_traj_len):
 
@@ -280,7 +280,8 @@ class STBuffer(MutableMapping):
             self[STSingleBufferKey.TRAJ_LEN][self.effective_idx] = effective_traj_len
 
             next_obs = trajectory.steps[traj_idx + 1].obs[0]
-            next_keylist = SupertrackUtils.parse_supertrack_data_field(next_obs, device=default_device(), use_tensor=True, return_as_keylist=True)
+            next_keylist = SupertrackUtils.parse_supertrack_data_field(next_obs, device=default_device(), use_tensor=True)
+            # pdb.set_trace()
             # Add PD Targets from next keylist 
             for key, value in next_keylist.items():
                 if key_is_pdtargets(key):
@@ -309,7 +310,7 @@ class STBuffer(MutableMapping):
         #     obs = exp.obs[0]
         #     if (len(obs) != TOTAL_OBS_LEN):
         #         raise Exception(f'Obs was of len {len(obs)} expected {TOTAL_OBS_LEN}')
-        #     st_keylist = SupertrackUtils.parse_supertrack_data_field(obs, device=default_device(), use_tensor=True, return_as_keylist=True)
+        #     st_keylist = SupertrackUtils.parse_supertrack_data_field(obs, device=default_device(), use_tensor=True)
         #     for key, value in st_keylist.items():
         #         self[key][self.effective_idx] = value
         #     self._cur_idx += 1
