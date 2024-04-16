@@ -91,6 +91,7 @@ class SuperTrackTrainer(RLTrainer):
         self.update_buffer : STBuffer = STBuffer(buffer_size=self.hyperparameters.buffer_size)
         self.wm_keylist = [*itertools.product([CharTypePrefix.SIM], CharTypeSuffix), *itertools.product([PDTargetPrefix.POST], PDTargetSuffix)]
         self.policy_keylist = [*itertools.product(CharTypePrefix, CharTypeSuffix), *itertools.product([PDTargetPrefix.PRE], PDTargetSuffix)]
+        self.has_sent_loss_weights = False
 
 
     # We need to delay initialization because the trainer is constructed in the main process but trains
@@ -255,13 +256,14 @@ class SuperTrackTrainer(RLTrainer):
                     self._stats_reporter.add_stat(stat, np.mean(stat_list))
                 self.update_steps += 1
                 has_updated = True
-                if self.update_steps == 1: # First update has happened
+                if  not self.has_sent_loss_weights and self.optimizer.wm_loss_weights.initialized.item() and self.optimizer.policy_loss_weights.initialized.item():
                     self._stats_reporter.add_property(
                         StatsPropertyType.LOSS_WEIGHTS, ("Policy loss weights:" , self.optimizer.policy_loss_weights.to_str())
                     )
                     self._stats_reporter.add_property(
                         StatsPropertyType.LOSS_WEIGHTS, ("World Model loss weights:" , self.optimizer.wm_loss_weights.to_str())
                     )
+                    self.has_sent_loss_weights = True
                     
 
         with nsys_profiler("copy policy weights", nsys_profiler_running):

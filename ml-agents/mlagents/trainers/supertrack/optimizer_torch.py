@@ -34,43 +34,69 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     num_epoch: int = 3
     steps_per_update: float = 1
     save_replay_buffer: bool = False
+    loss_weights_init_steps : int = 100
 
 
 def hn(x):
     if isinstance(x, list):
         return any([y.isnan().any() for y in x])
     return torch.isnan(x).any()
+import torch
+import torch.nn as nn
 
 class DynamicLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, num_iterations=100, alpha=0.01):
         super().__init__()
-        self.wpos_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
-        self.wrot_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
-        self.wvel_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
-        self.wrvel_loss = nn.Parameter(torch.tensor(-1.0), requires_grad=False)
+        # Initialize weights with some non-zero value to prevent division by zero
+        self.wpos_loss = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.wrot_loss = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.wvel_loss = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.wrvel_loss = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        
+        # Parameters for Exponential Moving Average
+        self.alpha = alpha  # Smoothing factor, determines update rate
+        self.ema_losses = nn.Parameter(torch.ones(4), requires_grad=False)  # Initial EMA values
+        self.total_losses = nn.Parameter(torch.zeros(4), requires_grad=False)
+        self.iteration_count = nn.Parameter(torch.tensor(0), requires_grad=False)
+        self.num_iterations = num_iterations
         self.initialized = nn.Parameter(torch.tensor(False), requires_grad=False)
+
+    def update_loss_weights(self, pos_loss, rot_loss, vel_loss, rvel_loss):
+        if self.initialized:
+            return
+        with torch.no_grad():
+            # Convert current losses to tensor
+            current_losses = torch.tensor([pos_loss, rot_loss, vel_loss, rvel_loss])
+            self.total_losses.data += current_losses
+            # Update EMA of losses
+            if self.iteration_count.item() == 0:
+                self.ema_losses.data = current_losses
+            else:
+                self.ema_losses.data = self.alpha * current_losses + (1 - self.alpha) * self.ema_losses
+            
+            # Increment the iteration count
+            self.iteration_count += 1
+
+            if self.iteration_count < self.num_iterations:
+                losses_to_use = self.ema_losses
+            elif self.iteration_count >= self.num_iterations:
+                losses_to_use = self.total_losses
+                self.initialized.data = torch.tensor(True)
+
+            total_avg_loss = losses_to_use.mean()
+            weights = total_avg_loss / losses_to_use
+            self.wpos_loss.data, self.wrot_loss.data, self.wvel_loss.data, self.wrvel_loss.data = weights
+
+    def get_reweighted_losses(self, pos_loss, rot_loss, vel_loss, rvel_loss):
+        self.update_loss_weights(pos_loss, rot_loss, vel_loss, rvel_loss)
+        return self.wpos_loss * pos_loss, self.wrot_loss * rot_loss, self.wvel_loss * vel_loss, self.wrvel_loss * rvel_loss
 
     def to_str(self):
         return f"""
-                Pos: {self.wpos_loss.data}
-                Rot: {self.wrot_loss.data}
-                Vel: {self.wvel_loss.data}
-                Rvel: {self.wrvel_loss.data}"""
-
-    def get_reweighted_losses(self, pos_loss, rot_loss, vel_loss, rvel_loss):
-        if not self.initialized.item():
-            total_loss = pos_loss + rot_loss + vel_loss + rvel_loss
-            losses = [pos_loss, rot_loss, vel_loss, rvel_loss]
-            for i, loss in enumerate(losses):
-                if loss.item() == 0:
-                    losses[i] = torch.tensor(1.0)  # Avoid division by zero
-            avg_loss = total_loss / 4
-            self.wpos_loss.data = avg_loss / losses[0]
-            self.wrot_loss.data = avg_loss / losses[1]
-            self.wvel_loss.data = avg_loss / losses[2]
-            self.wrvel_loss.data = avg_loss / losses[3]
-            self.initialized.data = torch.tensor(True)
-        return self.wpos_loss * pos_loss , self.wrot_loss * rot_loss , self.wvel_loss * vel_loss , self.wrvel_loss * rvel_loss
+                Pos: {self.wpos_loss.item()}
+                Rot: {self.wrot_loss.item()}
+                Vel: {self.wvel_loss.item()}
+                Rvel: {self.wrvel_loss.item()}"""
 
 class TorchSuperTrackOptimizer(TorchOptimizer):
     dtime = 1 / 60
@@ -89,8 +115,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.actor_gpu = None
         self.policy_optimizer = torch.optim.Adam(self.policy.actor.parameters(), lr=self.policy_lr)
         self.logger = get_logger(__name__)
-        self.wm_loss_weights = DynamicLoss()
-        self.policy_loss_weights = DynamicLoss()
+        self.wm_loss_weights = DynamicLoss(num_iterations=self.hyperparameters.loss_weights_init_steps)
+        self.policy_loss_weights = DynamicLoss(num_iterations=self.hyperparameters.loss_weights_init_steps)
                 
     def _init_world_model(self):
         """
@@ -194,8 +220,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # scalar_part = quat_diffs[...,:1] # The real/scalar part of a quaternion equals cos(angle/2) where angle is the angle of the quat
         # We're basically breaking the quaternion down into the sin and cos values of its angle, and 
         # atan2() is a function that, given a cos and sin value for an angle, returns the angle between it and the unit vector (1, 0)
-        angles = 2 * torch.atan2(norms, quat_diffs[..., :1])
-        raw_rot_l = angles.abs().sum(dim=(1,2)).mean()
+        halfangles = torch.atan2(norms, quat_diffs[..., :1])
+        quat_logs = halfangles * (quat_diffs[..., 1:] / norms)
+        raw_rot_l = quat_logs.abs().sum(dim=(1,2)).mean()
+        # raw_rot_l = angles.abs().sum(dim=(1,2)).mean()
 
         # batch_size, window_size, num_bones, num_entries = rot1.shape
         # quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, window_size, num_bones, 3)
@@ -349,7 +377,6 @@ class PolicyNetworkBody(nn.Module):
         # Used to normalize inputs
         if self.network_settings.normalize:
             self.normalizer = Normalizer(POLICY_NORMALIZATION_SIZE)
-        #     _layers += [nn.LayerNorm(self.input_size)]
 
         _layers += [LinearEncoder(
             self.network_settings.input_size,
@@ -404,7 +431,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         clip_action: bool = True,
     ):
         super().__init__()
-        # self.network_body = NetworkBody(observation_specs, network_settings)
         self.network_body = PolicyNetworkBody(network_settings)
         self.action_spec = action_spec
         self.continuous_act_size_vector = torch.nn.Parameter(
