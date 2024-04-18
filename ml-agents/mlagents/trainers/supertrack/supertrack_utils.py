@@ -175,7 +175,7 @@ class SupertrackUtils:
     def extract_char_state(obs: Union[torch.tensor, np.ndarray], # obs is of shape [batch_size, TOTAL_OBS_LEN] or [TOTAL_OBS_LEN]
                             idx: int, use_tensor: bool, device = None , pin_memory: bool = False) -> Tuple[CharState, int]:
         B = obs.shape[0] if len(obs.shape)  > 1 else 0
-        batched = B > 1
+        batched = B > 0
         shape = [B, NUM_BONES] if batched else [NUM_BONES]
         if use_tensor:
             if device is None:
@@ -235,7 +235,7 @@ class SupertrackUtils:
     @staticmethod
     def extract_pd_targets(obs: Union[torch.tensor, np.ndarray], idx, use_tensor : bool, pin_memory: bool = False, device = None) -> Tuple[PDTargets, int]:
         B = obs.shape[0] if len(obs.shape)  > 1 else 0
-        batched = B > 1
+        batched = B > 0
         shape = [B, NUM_BONES] if batched else [NUM_BONES]
         if use_tensor:
             if device is None:

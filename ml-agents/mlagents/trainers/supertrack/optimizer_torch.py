@@ -244,7 +244,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         predicted_global_sim_state =  [predicted_spos, predicted_srots, predicted_svels, predicted_srvels]
 
         predicted_local_spos, predicted_local_srots, predicted_local_svels, predicted_local_srvels = [torch.empty(batch_size, raw_window_size, NUM_T_BONES, s.shape[-1]) for s in ground_truth_sim_data]
-        # local_srots = torch.empty(batch_size, raw_window_size, NUM_T_BONES, 6) # We will put two-axis rotations into this tensor
         predicted_local_sim_state = [predicted_local_spos, predicted_local_srots, predicted_local_svels, predicted_local_srvels]
 
         local_kin_with_quat = SupertrackUtils.local(k_pos, k_rots, k_vels, k_rvels, include_quat_rots=True)
@@ -261,8 +260,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for window_step_i in range(raw_window_size):
             kin_idx = window_step_i
-            if self.hyperparameters.use_next_step_for_kin_training:
-                kin_idx += 1
+            # if self.hyperparameters.use_next_step_for_kin_training:
+            #     kin_idx += 1
             # Predict PD offsets
             local_kin_at_kin_idx = [get_tensor_at_window_step_i(k, kin_idx) for k in local_kin]
             input = [*local_kin_at_kin_idx , *local_sim_window_step_i]
@@ -301,11 +300,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # We don't want to use the first window step because those were ground truth values (for local_kin data)
         # We don't need to filter out the root bone because SuperTrackUtils.local already does that
-        if self.hyperparameters.use_next_step_for_kin_training:
-            reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] 
-        else:
+        # if self.hyperparameters.use_next_step_for_kin_training:
+        #     reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] 
+        # else:
             # We were predicting the corresponding kin_idx 
-            reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, :-1, ...] 
+        reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, :-1, ...] 
         local_kpos = reshape_local_kin_data(local_kin[0])
         local_krots = reshape_local_kin_data(local_kin_with_quat[-1])
         local_kvels = reshape_local_kin_data(local_kin[2])
