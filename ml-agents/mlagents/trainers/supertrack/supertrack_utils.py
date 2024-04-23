@@ -387,6 +387,7 @@ class SupertrackUtils:
                                     kin_rot_t: torch.Tensor, # shape [batch_size, num_t_bones, 6] num_t_bones = 16 
                                     kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
                                     local_tensors : Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] = None,
+                                    update_normalizer: bool = False,
                                     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Integrate a character state through the world model
@@ -402,7 +403,7 @@ class SupertrackUtils:
         input = (*local_tensors,
                     kin_rot_t.reshape(batch_size, -1),
                     kin_rvel_t.reshape(batch_size, -1))
-        output = world_model(*input, update_normalizer=True)
+        output = world_model(*input, update_normalizer=update_normalizer)
         local_accel, local_rot_accel = SupertrackUtils.split_world_model_output(output)
         # Convert to world space
         accel = pyt.quaternion_apply(root_rot, local_accel) 

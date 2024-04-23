@@ -34,7 +34,6 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     steps_per_update: float = 1
     save_replay_buffer: bool = False
     loss_weights_init_steps : int = 100
-    use_next_step_for_kin_training: bool = True
 
 
 def hn(x):
@@ -157,7 +156,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for i in range(raw_window_size):
             # Take one step through world
-            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *[t[:, i, ...] for t in world_model_tensors])
+            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *[t[:, i, ...] for t in world_model_tensors], update_normalize=True)
             # This overwrites the next window step with the root data of the current pos / rot, since we are updating everything 
             predicted_pos[:, i+1, ...], predicted_rots[:, i+1, ...], predicted_vels[:, i+1, ...], predicted_rot_vels[:, i+1, ...] = next_predicted_values
             # Copy over root pos and root rot, because world model does not update them
@@ -260,8 +259,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for window_step_i in range(raw_window_size):
             kin_idx = window_step_i
-            # if self.hyperparameters.use_next_step_for_kin_training:
-            #     kin_idx += 1
             # Predict PD offsets
             local_kin_at_kin_idx = [get_tensor_at_window_step_i(k, kin_idx) for k in local_kin]
             input = [*local_kin_at_kin_idx , *local_sim_window_step_i]
@@ -276,13 +273,14 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             next_sim_state = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *sim_state_window_step_i,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
                                                                 pre_target_vels[:, kin_idx, ...],
-                                                                local_tensors = local_sim_window_step_i)
+                                                                local_tensors = local_sim_window_step_i,
+                                                                update_normalizer=False)
             predicted_spos[:, window_step_i+1, ...], predicted_srots[:, window_step_i+1, ...], predicted_svels[:, window_step_i+1, ...], predicted_srvels[:, window_step_i+1, ...] = next_sim_state
             # Copy over root pos and root rot, because world model does not update them
             # predicted_spos[:, window_step_i+1, 0, :] = s_pos[:, window_step_i+1, 0, :]
             # predicted_srots[:, window_step_i+1, 0, :] = s_rots[:, window_step_i+1, 0, :]
 
-            sim_state_window_step_i =  [get_tensor_at_window_step_i(t, window_step_i + 1) for t in predicted_global_sim_state]
+            sim_state_window_step_i =  next_sim_state # [get_tensor_at_window_step_i(t, window_step_i + 1) for t in predicted_global_sim_state]
             local_sim_window_step_i_w_quats = SupertrackUtils.local(*sim_state_window_step_i, include_quat_rots=True)
             local_sim_window_step_i = local_sim_window_step_i_w_quats[:-1]
             for idx_into_list in range(4):
@@ -300,9 +298,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # We don't want to use the first window step because those were ground truth values (for local_kin data)
         # We don't need to filter out the root bone because SuperTrackUtils.local already does that
-        # if self.hyperparameters.use_next_step_for_kin_training:
-        #     reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, 1:, ...] 
-        # else:
             # We were predicting the corresponding kin_idx 
         reshape_local_kin_data = lambda x : x.reshape(batch_size, window_size, NUM_T_BONES, -1)[:, :-1, ...] 
         local_kpos = reshape_local_kin_data(local_kin[0])
