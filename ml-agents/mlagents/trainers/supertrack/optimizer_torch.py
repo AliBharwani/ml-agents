@@ -140,8 +140,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
     
     def update_world_model(self, batch, raw_window_size: int) -> Dict[str, float]:
         self._world_model.train()
-        suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
-        positions, rotations, vels, rot_vels, heights, up_dir = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]
+        # suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
+        suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL]
+        positions, rotations, vels, rot_vels = [batch[(CharTypePrefix.SIM, suffix)] for suffix in suffixes]
         kin_rot_t, kin_rvel_t = batch[(PDTargetPrefix.POST, PDTargetSuffix.ROT)], batch[(PDTargetPrefix.POST, PDTargetSuffix.RVEL)]
         # remove root bone from PDTargets 
         kin_rot_t, kin_rvel_t = kin_rot_t[:, :, 1:, :], kin_rvel_t[:, :, 1:, :] 
@@ -156,7 +157,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for i in range(raw_window_size):
             # Take one step through world
-            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *[t[:, i, ...] for t in world_model_tensors], update_normalize=True)
+            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *[t[:, i, ...] for t in world_model_tensors], update_normalizer=True)
             # This overwrites the next window step with the root data of the current pos / rot, since we are updating everything 
             predicted_pos[:, i+1, ...], predicted_rots[:, i+1, ...], predicted_vels[:, i+1, ...], predicted_rot_vels[:, i+1, ...] = next_predicted_values
             # Copy over root pos and root rot, because world model does not update them
@@ -258,9 +259,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         local_sim_window_step_i = local_sim_window_step_i_w_quats[:-1]
 
         for window_step_i in range(raw_window_size):
-            kin_idx = window_step_i
             # Predict PD offsets
-            local_kin_at_kin_idx = [get_tensor_at_window_step_i(k, kin_idx) for k in local_kin]
+            local_kin_at_kin_idx = [get_tensor_at_window_step_i(k, window_step_i) for k in local_kin]
             input = [*local_kin_at_kin_idx , *local_sim_window_step_i]
 
             action, determinstic_action = cur_actor.get_action_during_training(input)
@@ -268,11 +268,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             output = action.reshape(batch_size, NUM_T_BONES, 3)
             output =  pyt.axis_angle_to_quaternion(output)
             # Compute PD targets
-            cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, kin_idx, ...])
+            cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...])
             # Pass through world model
             next_sim_state = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *sim_state_window_step_i,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
-                                                                pre_target_vels[:, kin_idx, ...],
+                                                                pre_target_vels[:, window_step_i, ...],
                                                                 local_tensors = local_sim_window_step_i,
                                                                 update_normalizer=False)
             predicted_spos[:, window_step_i+1, ...], predicted_srots[:, window_step_i+1, ...], predicted_svels[:, window_step_i+1, ...], predicted_srvels[:, window_step_i+1, ...] = next_sim_state
