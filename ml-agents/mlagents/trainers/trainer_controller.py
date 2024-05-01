@@ -127,6 +127,8 @@ class TrainerController:
         self._register_new_behaviors(env_manager, env_manager.first_step_infos)
 
     def _not_done_training(self) -> bool:
+        if self.multiprocess:
+            return self.training_active.value
         return (
             any(t.should_still_train for t in self.trainers.values())
             or not self.train_model
@@ -157,9 +159,9 @@ class TrainerController:
                 stats_queue = mp.Queue(maxsize=0)
                 self.stats_queue = stats_queue
                 trainer = self.trainer_factory.generate(brain_name, stats_reporter_override=StatsReporterMP(brain_name, stats_queue))
-                # training_active = mp.Value("b", True)
+                self.training_active = mp.Value("b", True)
                 trainer_process = mp.Process(target=TrainerController.trainer_process_update_func,
-                                            args=(trainer, [], self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
+                                            args=(trainer, self.training_active, self.torch_settings, behavior_spec, self.logger.getEffectiveLevel()), 
                                             daemon=True, 
                                             name=f"trainer_process")
                 stats_reporter_process = mp.Process(target=stats.stats_processor, args=(brain_name, stats_queue, StatsReporter.writers,), daemon=True, name=f"stats_reporter_process")
@@ -400,14 +402,10 @@ class TrainerController:
             raise e
         try:
             while True:
-                    # if trainer.trainer_settings.multiprocess_trainer:
-                    #     _queried = trainer.advance_consumer()
-                    #     if not _queried:
-                    #         # Yield thread to avoid busy-waiting
-                    #         time.sleep(.0001)
-                    # else:
                     trainer.advance()
-
+                    if trainer.update_steps > trainer.max_training_updates:
+                        training_active.value = False
+                        break
                     # Before we set "training_active" to False, we need to make sure the traj_queue is emptied. 
                     # Otherwise, the main process could be blocked on that and not exit properly
         except(KeyboardInterrupt) as ex:

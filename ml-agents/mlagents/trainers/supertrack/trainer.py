@@ -235,9 +235,19 @@ class SuperTrackTrainer(RLTrainer):
         # num_steps_to_update = min(max_update_iterations, num_update_iterations_possible)
         # logger.debug(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
         
+        # By default unity uses self._step 
+        num_steps_in_buffer = self.update_buffer.lifetime_num_steps_added_to_buffer
+
+        # num_update_iterations_possible = int(((num_steps_in_buffer - self.hyperparameters.buffer_init_steps) / self.steps_per_update)) - self.update_steps + 1
+        # num_steps_to_update = min(max_update_iterations, num_update_iterations_possible)
+        # if num_steps_to_update > 0:
+        #     print("num_steps_in_buffer" , num_steps_in_buffer)
+        #     print("self._step", self._step)
+        #     print(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
         while  (self.update_steps - update_steps_before) < max_update_iterations and (
-            self._step - self.hyperparameters.buffer_init_steps
+            num_steps_in_buffer - self.hyperparameters.buffer_init_steps
         ) / max(1, self.update_steps) > self.steps_per_update:
+
             with nsys_profiler(f"iteration {self.update_steps - update_steps_before}", nsys_profiler_running):
                 with nsys_profiler("sample_mini_batch", nsys_profiler_running):
                     world_model_minibatch = self.update_buffer.sample_mini_batch(self.wm_batch_size, self.wm_window, key_list=self.wm_keylist)
@@ -331,3 +341,4 @@ class SuperTrackTrainer(RLTrainer):
     @staticmethod
     def get_trainer_name() -> str:
         return TRAINER_NAME
+    

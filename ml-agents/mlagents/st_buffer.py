@@ -326,3 +326,7 @@ class STBuffer(MutableMapping):
         """
         # We let _cur_idx roll over and mod it by buffer size when indexing
         return min(self._buffer_size, self._cur_idx)
+    
+    @property
+    def lifetime_num_steps_added_to_buffer(self) -> int:
+        return self._cur_idx

@@ -34,7 +34,7 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     steps_per_update: float = 1
     save_replay_buffer: bool = False
     loss_weights_init_steps : int = 100
-
+    gradient_clipping : float = -1
 
 def hn(x):
     if isinstance(x, list):
@@ -186,6 +186,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         self.world_model_optimzer.zero_grad(set_to_none=True)
         loss.backward()
+        if self.hyperparameters.gradient_clipping > 0: 
+            torch.nn.utils.clip_grad_norm_(self._world_model.parameters(), self.hyperparameters.gradient_clipping)
         self.world_model_optimzer.step()
         self.first_wm_update = False
         return update_stats
@@ -319,8 +321,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         lreg = torch.norm(all_means, p=2 ,dim=-1).sum(dim=-1).mean()
         lsreg = torch.norm(all_means, p=1 ,dim=-1).sum(dim=-1).mean()
         # Weigh regularization losses to contribute 1/100th of the other losses
-        lreg /= 100
-        lsreg /= 100
+        lreg /= 10
+        lsreg /= 10
         loss = pos_loss + rot_loss + vel_loss + rvel_loss + lreg + lsreg
 
         update_stats = {"Policy/Loss": loss.item(),
@@ -333,6 +335,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                         "Policy/learning_rate": self.policy_lr}
         self.policy_optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        if self.hyperparameters.gradient_clipping > 0: 
+            torch.nn.utils.clip_grad_norm_(cur_actor.parameters(), self.hyperparameters.gradient_clipping)
         self.policy_optimizer.step()
         self.first_policy_update = False
         return update_stats
