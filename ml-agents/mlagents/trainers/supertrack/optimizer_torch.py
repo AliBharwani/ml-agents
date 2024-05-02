@@ -34,6 +34,8 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     steps_per_update: float = 1
     save_replay_buffer: bool = False
     loss_weights_init_steps : int = 100
+    min_loss_weight: float = 0.5
+    max_loss_weight: float = 10.0
     gradient_clipping : float = -1
 
 def hn(x):
@@ -44,7 +46,7 @@ import torch
 import torch.nn as nn
 
 class DynamicLoss(nn.Module):
-    def __init__(self, num_iterations=100, alpha=0.01):
+    def __init__(self, min_loss_weight, max_loss_weight, num_iterations=100, alpha=0.01):
         super().__init__()
         # Initialize weights with some non-zero value to prevent division by zero
         self.wpos_loss = nn.Parameter(torch.tensor(1.0), requires_grad=False)
@@ -59,6 +61,8 @@ class DynamicLoss(nn.Module):
         self.iteration_count = nn.Parameter(torch.tensor(0), requires_grad=False)
         self.num_iterations = num_iterations
         self.initialized = nn.Parameter(torch.tensor(False), requires_grad=False)
+        self.min_loss_weight = nn.Parameter(torch.tensor(min_loss_weight), requires_grad=False)
+        self.max_loss_weight = nn.Parameter(torch.tensor(max_loss_weight), requires_grad=False)
 
     def update_loss_weights(self, pos_loss, rot_loss, vel_loss, rvel_loss):
         if self.initialized:
@@ -83,7 +87,7 @@ class DynamicLoss(nn.Module):
                 self.initialized.data = torch.tensor(True)
 
             total_avg_loss = losses_to_use.mean()
-            weights = total_avg_loss / losses_to_use
+            weights = torch.clamp(total_avg_loss / losses_to_use, self.min_loss_weight, self.max_loss_weight)
             self.wpos_loss.data, self.wrot_loss.data, self.wvel_loss.data, self.wrvel_loss.data = weights
 
     def get_reweighted_losses(self, pos_loss, rot_loss, vel_loss, rvel_loss):
@@ -114,8 +118,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.actor_gpu = None
         self.policy_optimizer = torch.optim.Adam(self.policy.actor.parameters(), lr=self.policy_lr)
         self.logger = get_logger(__name__)
-        self.wm_loss_weights = DynamicLoss(num_iterations=self.hyperparameters.loss_weights_init_steps)
-        self.policy_loss_weights = DynamicLoss(num_iterations=self.hyperparameters.loss_weights_init_steps)
+        self.wm_loss_weights = DynamicLoss(self.hyperparameters.min_loss_weight, self.hyperparameters.max_loss_weight, num_iterations=self.hyperparameters.loss_weights_init_steps)
+        self.policy_loss_weights = DynamicLoss(self.hyperparameters.min_loss_weight, self.hyperparameters.max_loss_weight, num_iterations=self.hyperparameters.loss_weights_init_steps)
                 
     def _init_world_model(self):
         """

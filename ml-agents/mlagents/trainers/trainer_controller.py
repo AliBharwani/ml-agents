@@ -403,7 +403,7 @@ class TrainerController:
         try:
             while True:
                     trainer.advance()
-                    if trainer.update_steps > trainer.max_training_updates:
+                    if trainer.update_steps > trainer.trainer_settings.max_training_updates:
                         training_active.value = False
                         break
                     # Before we set "training_active" to False, we need to make sure the traj_queue is emptied. 
