@@ -161,7 +161,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for i in range(raw_window_size):
             # Take one step through world
-            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *[t[:, i, ...] for t in world_model_tensors], update_normalizer=True)
+            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *[t[:, i, ...] for t in world_model_tensors], update_normalizer=i==0) # Only update normalizer if using ground truth values
             # This overwrites the next window step with the root data of the current pos / rot, since we are updating everything 
             predicted_pos[:, i+1, ...], predicted_rots[:, i+1, ...], predicted_vels[:, i+1, ...], predicted_rot_vels[:, i+1, ...] = next_predicted_values
             # Copy over root pos and root rot, because world model does not update them
@@ -200,8 +200,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # Input shapes: [batch_size, window_size, NUM_T_BONES, 3 or 4]
 
         def l1_norm(a, b, c = None):
-            diff = torch.abs(c if c is not None else a - b) # shape: [batch_size, window_size, num_bones, 3]
-            return torch.mean(torch.sum(diff, dim=(1,2,3)))
+            diff = c if c is not None else a - b # shape: [batch_size, window_size, num_bones, 3]
+            return diff.abs().sum(dim=(1,2,3)).mean()
+            # return torch.mean(torch.sum(diff, dim=(1,2,3)))
         
         raw_pos_l = l1_norm(pos1, pos2) #torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2,3)))
         raw_vel_l = l1_norm(vel1, vel2) 
@@ -213,7 +214,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # If you want to find a quaternion diff such that diff * q1 == q2, then you need to use the multiplicative inverse:
         # diff * q1 = q2  --->  diff = q2 * inverse(q1)
         # https://stackoverflow.com/questions/21513637/dot-product-of-two-quaternion-rotations
-        quat_diffs = pyt.quaternion_multiply(rot2, pyt.quaternion_invert(rot1))
+        quat_diffs = pyt.quaternion_multiply(SupertrackUtils.normalize_quat(rot2) , pyt.quaternion_invert(SupertrackUtils.normalize_quat(rot1) ))
         # vec_part = quat_diffs[..., 1:] # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
         norms = torch.norm(quat_diffs[..., 1:], p=2, dim=-1, keepdim=True) # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
         # scalar_part = quat_diffs[...,:1] # The real/scalar part of a quaternion equals cos(angle/2) where angle is the angle of the quat
@@ -221,12 +222,17 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         # atan2() is a function that, given a cos and sin value for an angle, returns the angle between it and the unit vector (1, 0)
         halfangles = torch.atan2(norms, quat_diffs[..., :1])
         quat_logs = halfangles * (quat_diffs[..., 1:] / norms)
-        raw_rot_l = quat_logs.abs().sum(dim=(1,2)).mean()
-        # raw_rot_l = angles.abs().sum(dim=(1,2)).mean()
+        raw_rot_l = l1_norm(None, None, c=quat_logs) #quat_logs.abs().sum(dim=(1,2,3)).mean()
 
         # batch_size, window_size, num_bones, num_entries = rot1.shape
+        # quat_diffs = pyt.quaternion_multiply(rot2, pyt.quaternion_invert(rot1))
         # quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, window_size, num_bones, 3)
         # raw_rot_l = l1_norm(None, None, c=quat_logs.abs())
+
+        # d = torch.abs(torch.sum(SupertrackUtils.normalize_quat(rot1) * SupertrackUtils.normalize_quat(rot2), dim=-1))
+        # d = torch.clamp(d, min=-1.0, max=1.0)
+        # theta = 2 * torch.acos(d)
+        # raw_rot_l = theta.sum(dim=(1,2)).mean()
 
         return raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l
 

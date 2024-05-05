@@ -345,8 +345,10 @@ class SupertrackUtils:
             tensors of shape [..., NUM_T_BONES * (3 or 4 or 6)] by default
                              if unzip_to_batchsize is false: [..., NUM_T_BONES, 3 or 4 or 6] 
         """
-        root_pos = cur_pos[..., 0:1 , :].detach().clone() # shape [..., 1, 3]
-        inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :].detach().clone()) # shape [..., 1, 4]
+        # root_pos = cur_pos[..., 0:1 , :].detach().clone() # shape [..., 1, 3]
+        # inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :].detach().clone()) # shape [..., 1, 4]
+        root_pos = cur_pos[..., 0:1 , :].clone() # shape [..., 1, 3]
+        inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :].clone()) # shape [..., 1, 4]
         inv_root_rots = SupertrackUtils.normalize_quat(inv_root_rots)
         local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos - root_pos) # shape [..., num_t_bones, 3]
         B = cur_pos.shape[:-2]
@@ -397,7 +399,10 @@ class SupertrackUtils:
         don't want to compute loss with root bone
         """
         batch_size = pos.shape[0]
-        root_rot = rots[:, 0:1, :].detach().clone() 
+        # root_rot = SupertrackUtils.normalize_quat(rots[:, 0:1, :].detach().clone()) 
+        root_rot = SupertrackUtils.normalize_quat(rots[:, 0:1, :].clone()) # To detach or not...  
+        # If you detach, you're basically saying "Ok don't worry about outputting correct hip rot too much, because
+        # even if it affects the next frame's local velocities and such it won't backprop gradients to correct them"
         if local_tensors is None:
             local_tensors = SupertrackUtils.local(pos, rots, vels, rvels)
             
