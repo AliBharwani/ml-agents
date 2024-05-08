@@ -37,6 +37,7 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     min_loss_weight: float = 0.5
     max_loss_weight: float = 10.0
     gradient_clipping : float = -1
+    take_policy_loss_in_local_space : bool = True
 
 def hn(x):
     if isinstance(x, list):
@@ -120,6 +121,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.logger = get_logger(__name__)
         self.wm_loss_weights = DynamicLoss(self.hyperparameters.min_loss_weight, self.hyperparameters.max_loss_weight, num_iterations=self.hyperparameters.loss_weights_init_steps)
         self.policy_loss_weights = DynamicLoss(self.hyperparameters.min_loss_weight, self.hyperparameters.max_loss_weight, num_iterations=self.hyperparameters.loss_weights_init_steps)
+        self.take_policy_loss_in_local_space = self.hyperparameters.take_policy_loss_in_local_space
                 
     def _init_world_model(self):
         """

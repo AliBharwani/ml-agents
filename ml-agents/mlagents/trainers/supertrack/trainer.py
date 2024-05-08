@@ -104,6 +104,7 @@ class SuperTrackTrainer(RLTrainer):
         self.model_saver.initialize_or_load()
         self._step = self.policy.get_current_step()
         self.update_steps = self.policy.get_current_training_iteration()
+        self.update_steps_this_run = 0
         if not default_device().type == "cuda":
             print(f"WARNING: SUPERTRACK IS NOT TRAINING ON GPU! DEVICE: {default_device()}")
         if self.multiprocess and default_device().type == "cuda":
@@ -244,9 +245,10 @@ class SuperTrackTrainer(RLTrainer):
         #     print("num_steps_in_buffer" , num_steps_in_buffer)
         #     print("self._step", self._step)
         #     print(f"{datetime.now().strftime('%I:%M:%S ')} Will update {num_steps_to_update} times (out of {num_update_iterations_possible} possible) - self._step: {self._step}")
+
         while  (self.update_steps - update_steps_before) < max_update_iterations and (
             num_steps_in_buffer - self.hyperparameters.buffer_init_steps
-        ) / max(1, self.update_steps) > self.steps_per_update:
+        ) / max(1, self.update_steps_this_run) > self.steps_per_update:
 
             with nsys_profiler(f"iteration {self.update_steps - update_steps_before}", nsys_profiler_running):
                 with nsys_profiler("sample_mini_batch", nsys_profiler_running):
@@ -264,6 +266,7 @@ class SuperTrackTrainer(RLTrainer):
 
                 for stat, stat_list in batch_update_stats.items():
                     self._stats_reporter.add_stat(stat, np.mean(stat_list))
+                self.update_steps_this_run += 1
                 self.update_steps += 1
                 has_updated = True
                 if  not self.has_sent_loss_weights and self.optimizer.wm_loss_weights.initialized.item() and self.optimizer.policy_loss_weights.initialized.item():
