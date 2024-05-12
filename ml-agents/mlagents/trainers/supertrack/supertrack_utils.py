@@ -464,6 +464,21 @@ class SupertrackUtils:
         halfangles = torch.atan2(norms, quat_diffs[..., :1])
         quat_logs = halfangles * (quat_diffs[..., 1:] / norms)
         raw_rot_l = l1_norm(None, None, c=quat_logs) #quat_logs.abs().sum(dim=(1,2,3)).mean()
+        if unbatched:
+            pp = lambda t : '[' + ', '.join(f"{x:.4f}" for x in t.cpu().numpy()) + ',]'
+            # print(rvel1 - rvel2)
+            for idx, bone in enumerate(BONENAMES):
+                # pdb.set_trace()
+                # print(f"{bone[5:]} \t kin: {rvel1[idx]} \t sim: {rvel2[idx]} loss: {torch.abs(rvel1[idx] - rvel2[idx]).sum()}")
+                padding = '\t\t' if idx < 4 else ' \t'
+                bone_loss = torch.abs(rvel1[idx] - rvel2[idx]).sum()
+                print(f"{bone[5:]}{padding} kin: {pp(rvel1[idx])} {torch.norm(rvel1[idx])} \t sim: {pp(rvel2[idx])} {torch.norm(rvel2[idx])} loss: {bone_loss}")
+
+
+            # pdb.set_trace()
+            # print(quat_logs)
+            # print(f"LeftForearm rot loss: {quat_logs[-2].abs().sum()}")
+            # print(f"RightForearm rot loss: {quat_logs[-1].abs().sum()}")
 
         # batch_size, window_size, num_bones, num_entries = rot1.shape
         # quat_diffs = pyt.quaternion_multiply(rot2, pyt.quaternion_invert(rot1))
@@ -481,9 +496,12 @@ class SupertrackUtils:
     def debug_loss_at_frame(st_data : SuperTrackDataField):
         sim_state = st_data.sim_char_state
         kin_state = st_data.kin_char_state
-        k_pos, k_rot, k_vel, k_rvel = kin_state.as_tensors()
-        s_pos, s_rot, s_vel, s_rvel = sim_state.as_tensors()
+        remove_root_bone = lambda x: x[1:, :]
+        k_pos, k_rot, k_vel, k_rvel = [remove_root_bone(k) for k in kin_state.as_tensors()]
+        s_pos, s_rot, s_vel, s_rvel = [remove_root_bone(s) for s in sim_state.as_tensors()]
+        #remove root bones 
         # pdb.set_trace()
+        torch.set_printoptions(profile="default")
 
         pos_loss, rot_loss, vel_loss, rvel_loss  = SupertrackUtils.char_state_loss(k_pos, s_pos, k_rot, s_rot, k_vel, s_vel, k_rvel, s_rvel, unbatched = True)
         print(f"""\tPos_L : {pos_loss}
@@ -499,3 +517,11 @@ class SupertrackUtils:
         offset_as_quat = pyt.axis_angle_to_quaternion(policy_action)
         kin_targets = pyt.quaternion_multiply(pd_targets, offset_as_quat)
         return kin_targets
+    
+
+BONENAMES = [
+    "Bone_Hips", "Bone_Spine", "Bone_Spine1", "Bone_Spine2",
+    "Bone_LeftUpLeg", "Bone_RightUpLeg", "Bone_LeftLeg", "Bone_RightLeg",
+    "Bone_LeftFoot", "Bone_RightFoot", "Bone_LeftShoulder", "Bone_RightShoulder",
+    "Bone_LeftArm", "Bone_RightArm", "Bone_LeftForeArm", "Bone_RightForeArm"
+]
