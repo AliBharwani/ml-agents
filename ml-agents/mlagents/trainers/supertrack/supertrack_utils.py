@@ -12,6 +12,7 @@ import pytorch3d.transforms as pyt
 
 import numpy as np
 from mlagents.trainers.torch_entities.utils import ModelUtils
+from torch import Tensor
 
 
 TOTAL_OBS_LEN = 720
@@ -155,7 +156,7 @@ class SupertrackUtils:
         return pyt.axis_angle_to_quaternion(actions * alpha)
         
     @staticmethod
-    def process_raw_observations_to_policy_input(st_data : List[SuperTrackDataField]) -> torch.Tensor:
+    def process_raw_observations_to_policy_input(st_data : List[SuperTrackDataField], include_global_data: bool) -> Tuple[List[torch.Tensor], torch.Tensor | None]:
         """
         Take inputs directly from Unity and transform them into a form that can be used as input to the policy.
         """
@@ -169,7 +170,14 @@ class SupertrackUtils:
         kin_inputs = [st_datum.kin_char_state.values() for st_datum in st_data]
         kin_inputs = [torch.stack(t)[:, 1:, :] for t in zip(*kin_inputs)]
         local_kin = SupertrackUtils.local(*kin_inputs)
-        return [*local_kin, *local_sim]
+        global_drift = None
+        if include_global_data:
+            sim_world_hip_pos = sim_inputs[0][:, 0, :] # sim_inputs[0] gives us positions, [:, 0, :] we select all batches, 0th bone (hip), all coords
+            kin_world_hip_pos = kin_inputs[0][:, 0, :]
+            global_drift = kin_world_hip_pos - sim_world_hip_pos
+            # print(f"Sim world pos - {sim_world_hip_pos} Kin world pos - {kin_world_hip_pos} global_drift: {global_drift}")
+            # pdb.set_trace()
+        return [*local_kin, *local_sim], global_drift 
     
     @staticmethod
     def extract_char_state(obs: Union[torch.tensor, np.ndarray], # obs is of shape [batch_size, TOTAL_OBS_LEN] or [TOTAL_OBS_LEN]
@@ -328,12 +336,10 @@ class SupertrackUtils:
         return result / torch.norm(result, dim=-1, keepdim=True)
 
     @staticmethod
-    def local(cur_pos: torch.Tensor, # shape [..., num_bones, 3] TESTING with num_t_bones for input tensors instead
-            cur_rots: torch.Tensor, # shape [..., num_bones, 4]
-            cur_vels: torch.Tensor,   # shape [..., num_bones, 3]
-            cur_rot_vels: torch.Tensor, # shape [..., num_bones, 3]
-            # cur_heights: torch.Tensor, # shape [..., num_bones]
-            # cur_up_dir: torch.Tensor, # shape [..., 3]
+    def local(cur_pos: torch.Tensor, # shape [..., num_t_bones, 3]
+            cur_rots: torch.Tensor, # shape [..., num_t_bones, 4]
+            cur_vels: torch.Tensor,   # shape [..., num_t_bones, 3]
+            cur_rot_vels: torch.Tensor, # shape [..., num_t_bones, 3]
             include_quat_rots: bool = False,
             unzip_to_batchsize: bool = True,
             ): 

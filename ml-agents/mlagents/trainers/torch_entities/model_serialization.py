@@ -112,7 +112,8 @@ class ModelSerializer:
             ]
         else:
             logger.info("Serializing policy based on yaml file input_size, not BehaviorSpec obs shape")
-            dummy_obs = torch.zeros(batch_dim + [policy_input_setting], device=device )
+            extra = 3 if policy.actor.policy_includes_global_data else 0
+            dummy_obs = torch.zeros(batch_dim + [policy_input_setting + extra], device=device )
 
         dummy_masks = torch.ones(
             batch_dim + [sum(self.policy.behavior_spec.action_spec.discrete_branches)], device=device
