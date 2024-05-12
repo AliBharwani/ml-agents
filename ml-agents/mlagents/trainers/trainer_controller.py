@@ -148,7 +148,7 @@ class TrainerController:
         else:
             trainer_config = self.trainer_factory.trainer_config[brain_name]
             if trainer_config.threaded:
-                trainer = self.trainer_factory.generate(brain_name, self.torch_settings)
+                trainer = self.trainer_factory.generate(brain_name)
                 # Only create trainer thread for new trainers
                 trainerthread = threading.Thread(
                     target=self.trainer_update_func, args=(trainer,), daemon=True
@@ -179,6 +179,7 @@ class TrainerController:
             policy = trainer.create_policy(
                 parsed_behavior_id,
                 behavior_spec,
+                self.torch_settings
             )
         trainer.torch_settings = self.torch_settings
         trainer.add_policy(parsed_behavior_id, policy)

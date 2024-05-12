@@ -312,7 +312,7 @@ class SuperTrackTrainer(RLTrainer):
 
 
     def create_policy(
-        self, parsed_behavior_id: BehaviorIdentifiers, behavior_spec: BehaviorSpec
+        self, parsed_behavior_id: BehaviorIdentifiers, behavior_spec: BehaviorSpec, torch_settings: TorchSettings
     ) -> TorchPolicy:
         """
         Creates a policy with a PyTorch backend and Supertrack hyperparameters
@@ -321,7 +321,11 @@ class SuperTrackTrainer(RLTrainer):
         :return policy
         """
         actor_cls = SuperTrackPolicyNetwork
-        actor_kwargs = {"conditional_sigma": False, "tanh_squash": False, "clip_action": self.trainer_settings.clip_action, "policy_includes_global_data": self.trainer_settings.hyperparameters.policy_includes_global_data}
+        actor_kwargs = {"conditional_sigma": False,
+                         "tanh_squash": False,
+                           "clip_action": self.trainer_settings.clip_action, 
+                           "policy_includes_global_data": self.trainer_settings.hyperparameters.policy_includes_global_data,
+                           "st_debug": torch_settings.st_debug}
 
         policy = TorchPolicy(
             self.seed,

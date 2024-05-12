@@ -10,7 +10,7 @@ from mlagents.trainers.trajectory import Trajectory
 from mlagents.trainers.agent_processor import AgentManagerQueue
 from mlagents.trainers.policy import Policy
 from mlagents.trainers.behavior_id_utils import BehaviorIdentifiers
-from mlagents.trainers.settings import TrainerSettings
+from mlagents.trainers.settings import TorchSettings, TrainerSettings
 
 
 logger = get_logger(__name__)
@@ -154,6 +154,7 @@ class Trainer(abc.ABC):
         self,
         parsed_behavior_id: BehaviorIdentifiers,
         behavior_spec: BehaviorSpec,
+        torch_settings: TorchSettings,
     ) -> Policy:
         """
         Creates a Policy object

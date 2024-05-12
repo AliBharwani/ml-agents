@@ -866,6 +866,7 @@ class TorchSettings:
     device: Optional[str] = parser.get_default("device")
     anomaly: Optional[bool] = parser.get_default("anomaly")
     profile: Optional[bool] = parser.get_default("profile")
+    st_debug: Optional[bool] = parser.get_default("st_debug")
 
 
 @attr.s(auto_attribs=True)

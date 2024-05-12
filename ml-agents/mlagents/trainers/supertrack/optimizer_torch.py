@@ -180,7 +180,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         # We slice using [:, 1:, 1:, :] because we want to compute losses over the entire batch, skip the first window step (since that was not predicted by
         # the world model), and skip the root bone 
-        raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = self.char_state_loss(positions[:, 1:, 1:, :],
+        raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = SupertrackUtils.char_state_loss(positions[:, 1:, 1:, :],
                                                         predicted_pos[:, 1:, :, :],
                                                         rotations[:, 1:, 1:, :],
                                                         predicted_rots[:, 1:, :, :], 
@@ -206,45 +206,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.first_wm_update = False
         return update_stats
     
-    def char_state_loss(self, pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2):
-        # Input shapes: [batch_size, window_size, NUM_T_BONES, 3 or 4]
-
-        def l1_norm(a, b, c = None):
-            diff = c if c is not None else a - b # shape: [batch_size, window_size, num_bones, 3]
-            return diff.abs().sum(dim=(1,2,3)).mean()
-            # return torch.mean(torch.sum(diff, dim=(1,2,3)))
-        
-        raw_pos_l = l1_norm(pos1, pos2) #torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2,3)))
-        raw_vel_l = l1_norm(vel1, vel2) 
-        raw_rvel_l = l1_norm(rvel1, rvel2)
-        if rot1.shape[-1] != 4: # rots are in quat form
-            raise Exception(f"Rots in unexpected shape: {rot1.shape}")
-
-        # From Stack Overflow:
-        # If you want to find a quaternion diff such that diff * q1 == q2, then you need to use the multiplicative inverse:
-        # diff * q1 = q2  --->  diff = q2 * inverse(q1)
-        # https://stackoverflow.com/questions/21513637/dot-product-of-two-quaternion-rotations
-        quat_diffs = pyt.quaternion_multiply(SupertrackUtils.normalize_quat(rot2) , pyt.quaternion_invert(SupertrackUtils.normalize_quat(rot1) ))
-        # vec_part = quat_diffs[..., 1:] # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
-        norms = torch.norm(quat_diffs[..., 1:], p=2, dim=-1, keepdim=True) # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
-        # scalar_part = quat_diffs[...,:1] # The real/scalar part of a quaternion equals cos(angle/2) where angle is the angle of the quat
-        # We're basically breaking the quaternion down into the sin and cos values of its angle, and 
-        # atan2() is a function that, given a cos and sin value for an angle, returns the angle between it and the unit vector (1, 0)
-        halfangles = torch.atan2(norms, quat_diffs[..., :1])
-        quat_logs = halfangles * (quat_diffs[..., 1:] / norms)
-        raw_rot_l = l1_norm(None, None, c=quat_logs) #quat_logs.abs().sum(dim=(1,2,3)).mean()
-
-        # batch_size, window_size, num_bones, num_entries = rot1.shape
-        # quat_diffs = pyt.quaternion_multiply(rot2, pyt.quaternion_invert(rot1))
-        # quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, window_size, num_bones, 3)
-        # raw_rot_l = l1_norm(None, None, c=quat_logs.abs())
-
-        # d = torch.abs(torch.sum(SupertrackUtils.normalize_quat(rot1) * SupertrackUtils.normalize_quat(rot2), dim=-1))
-        # d = torch.clamp(d, min=-1.0, max=1.0)
-        # theta = 2 * torch.acos(d)
-        # raw_rot_l = theta.sum(dim=(1,2)).mean()
-
-        return raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l
 
     def update_policy(self, batch: STBuffer, batch_size: int, raw_window_size: int, nsys_profiler_running: bool = False) -> Dict[str, float]:
         cur_actor = self.policy.actor
@@ -337,7 +298,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         loss_kpos, loss_krots, loss_kvels, loss_krvels = [reshape_kin_data(t) for t in kin_tensors_for_loss]
         loss_spos, loss_srots, loss_svels, loss_srvels = [reshape_sim_data(t) for t in sim_tensors_for_loss]
         
-        raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = self.char_state_loss(loss_kpos,
+        raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l = SupertrackUtils.char_state_loss(loss_kpos,
                                                                         loss_spos,
                                                                         loss_krots,
                                                                         loss_srots,
@@ -460,6 +421,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         device: str = None,
         clip_action: bool = True,
         policy_includes_global_data: bool = False,
+        st_debug: bool = False,
     ):
         super().__init__()
         self.network_body = PolicyNetworkBody(network_settings, policy_includes_global_data=policy_includes_global_data)
@@ -490,6 +452,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             output_scale=self.output_scale,
         )
         self.policy_includes_global_data = policy_includes_global_data
+        self.st_debug = st_debug
         # self.highest_kin_vel = torch.tensor([0, 0, 0], dtype=torch.float32, device= torch.device("cpu"))
         # self.highest_sim_vel = torch.tensor([0, 0, 0], dtype=torch.float32, device= torch.device("cpu"))
 
@@ -602,6 +565,10 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         # should be shape [num_obs_types (1), num_agents, POLICY_INPUT_LEN or NUM_OBS]
         policy_input = inputs[0]
         supertrack_data = SupertrackUtils.parse_supertrack_data_field(policy_input)
+        if self.st_debug: # If we're doing debug, we should only have one agent anyways, so S
+            st_data = supertrack_data[0]
+            SupertrackUtils.debug_loss_at_frame(st_data)
+
         policy_input, global_drift = SupertrackUtils.process_raw_observations_to_policy_input(supertrack_data, self.policy_includes_global_data)
 
         encoding = self.network_body(*policy_input, global_drift=global_drift)

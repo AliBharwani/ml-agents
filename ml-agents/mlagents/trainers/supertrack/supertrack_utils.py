@@ -76,7 +76,7 @@ class CharState():
         if not torch.is_tensor(self.positions):
             raise Exception("CharState.as_tensors called on non-tensor object")
             return torch.tensor(self.positions, dtype=torch.float32), torch.tensor(self.rotations, dtype=torch.float32), torch.tensor(self.velocities, dtype=torch.float32), torch.tensor(self.rot_velocities, dtype=torch.float32), torch.tensor(self.heights, dtype=torch.float32), torch.tensor(self.up_dir, dtype=torch.float32)#[None, :]
-        return self.positions.to(device, non_blocking=True), self.rotations.to(device, non_blocking=True), self.velocities.to(device, non_blocking=True), self.rot_velocities.to(device, non_blocking=True), self.heights.to(device, non_blocking=True), self.up_dir.to(device, non_blocking=True)
+        return self.positions.to(device, non_blocking=True), self.rotations.to(device, non_blocking=True), self.velocities.to(device, non_blocking=True), self.rot_velocities.to(device, non_blocking=True)
     
     # @functools.cached_property
     def values(self):
@@ -434,6 +434,64 @@ class SupertrackUtils:
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*dtime) , rots.clone())
         return pos, rots, vels, rvels
     
+
+    def char_state_loss(pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2, unbatched : bool = False):
+        # Input shapes: [batch_size, window_size, NUM_T_BONES, 3 or 4]
+
+        def l1_norm(a, b, c = None):
+            diff = c if c is not None else a - b # shape: [batch_size, window_size, num_bones, 3]
+            if unbatched: # for debug and testing purposes
+                return diff.abs().sum() # Do not need to take average over batch size
+            return diff.abs().sum(dim=(1,2,3)).mean()
+            # return torch.mean(torch.sum(diff, dim=(1,2,3)))
+        
+        raw_pos_l = l1_norm(pos1, pos2) #torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2,3)))
+        raw_vel_l = l1_norm(vel1, vel2) 
+        raw_rvel_l = l1_norm(rvel1, rvel2)
+        if rot1.shape[-1] != 4: # rots are in quat form
+            raise Exception(f"Rots in unexpected shape: {rot1.shape}")
+
+        # From Stack Overflow:
+        # If you want to find a quaternion diff such that diff * q1 == q2, then you need to use the multiplicative inverse:
+        # diff * q1 = q2  --->  diff = q2 * inverse(q1)
+        # https://stackoverflow.com/questions/21513637/dot-product-of-two-quaternion-rotations
+        quat_diffs = pyt.quaternion_multiply(SupertrackUtils.normalize_quat(rot2) , pyt.quaternion_invert(SupertrackUtils.normalize_quat(rot1) ))
+        # vec_part = quat_diffs[..., 1:] # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
+        norms = torch.norm(quat_diffs[..., 1:], p=2, dim=-1, keepdim=True) # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
+        # scalar_part = quat_diffs[...,:1] # The real/scalar part of a quaternion equals cos(angle/2) where angle is the angle of the quat
+        # We're basically breaking the quaternion down into the sin and cos values of its angle, and 
+        # atan2() is a function that, given a cos and sin value for an angle, returns the angle between it and the unit vector (1, 0)
+        halfangles = torch.atan2(norms, quat_diffs[..., :1])
+        quat_logs = halfangles * (quat_diffs[..., 1:] / norms)
+        raw_rot_l = l1_norm(None, None, c=quat_logs) #quat_logs.abs().sum(dim=(1,2,3)).mean()
+
+        # batch_size, window_size, num_bones, num_entries = rot1.shape
+        # quat_diffs = pyt.quaternion_multiply(rot2, pyt.quaternion_invert(rot1))
+        # quat_logs = pyt.so3_log_map(pyt.quaternion_to_matrix(quat_diffs).reshape(-1, 3, 3)).reshape(batch_size, window_size, num_bones, 3)
+        # raw_rot_l = l1_norm(None, None, c=quat_logs.abs())
+
+        # d = torch.abs(torch.sum(SupertrackUtils.normalize_quat(rot1) * SupertrackUtils.normalize_quat(rot2), dim=-1))
+        # d = torch.clamp(d, min=-1.0, max=1.0)
+        # theta = 2 * torch.acos(d)
+        # raw_rot_l = theta.sum(dim=(1,2)).mean()
+
+        return raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l
+    
+
+    def debug_loss_at_frame(st_data : SuperTrackDataField):
+        sim_state = st_data.sim_char_state
+        kin_state = st_data.kin_char_state
+        k_pos, k_rot, k_vel, k_rvel = kin_state.as_tensors()
+        s_pos, s_rot, s_vel, s_rvel = sim_state.as_tensors()
+        # pdb.set_trace()
+
+        pos_loss, rot_loss, vel_loss, rvel_loss  = SupertrackUtils.char_state_loss(k_pos, s_pos, k_rot, s_rot, k_vel, s_vel, k_rvel, s_rvel, unbatched = True)
+        print(f"""\tPos_L : {pos_loss}
+        Rot_L : {rot_loss}
+        Vel_L : {vel_loss}
+        Rvel_L : {rvel_loss}
+        ====""")
+
     def apply_policy_action_to_pd_targets(pd_targets: torch.Tensor, # shape [NUM_T_BONES, 4]
                                            policy_action: torch.Tensor, # shape [48]
                                             ):

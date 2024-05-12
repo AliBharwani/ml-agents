@@ -310,6 +310,12 @@ def _create_parser() -> argparse.ArgumentParser:
         action=DetectDefaultStoreTrue,
         help="Whether to enable PyTorch profiling detection for the Torch backend.",
     )
+    torch_conf.add_argument(
+        "--st_debug",
+        default=False,
+        action=DetectDefaultStoreTrue,
+        help="Whether to enable special supertrack debugging options.",
+    )
     return argparser
 
 
