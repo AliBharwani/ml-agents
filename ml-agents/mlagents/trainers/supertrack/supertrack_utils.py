@@ -472,7 +472,7 @@ class SupertrackUtils:
                 # print(f"{bone[5:]} \t kin: {rvel1[idx]} \t sim: {rvel2[idx]} loss: {torch.abs(rvel1[idx] - rvel2[idx]).sum()}")
                 padding = '\t\t' if idx < 4 else ' \t'
                 bone_loss = torch.abs(rvel1[idx] - rvel2[idx]).sum()
-                print(f"{bone[5:]}{padding} kin: {pp(rvel1[idx])} {torch.norm(rvel1[idx])} \t sim: {pp(rvel2[idx])} {torch.norm(rvel2[idx])} loss: {bone_loss}")
+                print(f"{bone[5:]}{padding} kin: {pp(rvel1[idx])} {torch.norm(rvel1[idx]).item():.4f} \t sim: {pp(rvel2[idx])} {torch.norm(rvel2[idx]).item():.4f} loss: {bone_loss.item():.4f}")
 
 
             # pdb.set_trace()
@@ -501,7 +501,7 @@ class SupertrackUtils:
         s_pos, s_rot, s_vel, s_rvel = [remove_root_bone(s) for s in sim_state.as_tensors()]
         #remove root bones 
         # pdb.set_trace()
-        torch.set_printoptions(profile="default")
+        torch.set_printoptions(profile="short")
 
         pos_loss, rot_loss, vel_loss, rvel_loss  = SupertrackUtils.char_state_loss(k_pos, s_pos, k_rot, s_rot, k_vel, s_vel, k_rvel, s_rvel, unbatched = True)
         print(f"""\tPos_L : {pos_loss}
