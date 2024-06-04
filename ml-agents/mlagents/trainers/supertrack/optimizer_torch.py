@@ -254,7 +254,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             output = action.reshape(batch_size, NUM_T_BONES, 3)
             output =  pyt.axis_angle_to_quaternion(output)
             # Compute PD targets
-            cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...])
+            # cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...])
+            cur_kin_targets = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...]))
             # Pass through world model
             next_sim_state = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *sim_state_window_step_i,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
@@ -447,7 +448,7 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             tanh_squash=tanh_squash,
             deterministic=network_settings.deterministic,
             init_near_zero=network_settings.init_near_zero,
-            noise_scale=.3,
+            noise_scale=.1,
             clip_action=clip_action,
             output_scale=self.output_scale,
         )
@@ -555,7 +556,6 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         :param inputs: A List of inputs as tensors.
         :param masks: If using discrete actions, a Tensor of action masks.
         :param memories: If using memory, a Tensor of initial memories.
-        :param sequence_length: If using memory, the sequence length.
         :return: A Tuple of AgentAction, ActionLogProbs, entropies, and memories.
             Memories will be None if not using memory.
         """

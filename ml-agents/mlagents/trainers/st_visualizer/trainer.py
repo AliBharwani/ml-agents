@@ -139,8 +139,8 @@ class STVisualizerTrainer(Trainer):
         self._initialize()
         # Give policy actor a copy of the world model on CPU
         cpu_world_model = copy.deepcopy(self.optimizer._world_model).to('cpu')
-        policy.actor.world_model = cpu_world_model
-
+        # policy.actor.world_model = cpu_world_model
+        policy.actor.world_model = copy.deepcopy(self.optimizer._world_model)
         # Needed to resume loads properly
         self._step = policy.get_current_step()
         
@@ -166,7 +166,7 @@ class STVisualizerTrainer(Trainer):
 
 
     def create_policy(
-        self, parsed_behavior_id: BehaviorIdentifiers, behavior_spec: BehaviorSpec
+        self, parsed_behavior_id: BehaviorIdentifiers, behavior_spec: BehaviorSpec, torch_settings: TorchSettings
     ) -> TorchPolicy:
         """
         Creates a policy with a PyTorch backend and Supertrack hyperparameters
@@ -175,7 +175,9 @@ class STVisualizerTrainer(Trainer):
         :return policy
         """
         actor_cls = STVisualizationActor
-        actor_kwargs = {"conditional_sigma": False, "tanh_squash": False, "clip_action": self.trainer_settings.clip_action}
+        actor_kwargs = {"conditional_sigma": False, "tanh_squash": False, "clip_action": self.trainer_settings.clip_action, 
+                           "policy_includes_global_data": self.trainer_settings.hyperparameters.policy_includes_global_data,
+                           "st_debug": torch_settings.st_debug}
 
         policy = TorchPolicy(
             self.seed,

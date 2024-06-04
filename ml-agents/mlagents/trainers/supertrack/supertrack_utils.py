@@ -387,11 +387,11 @@ class SupertrackUtils:
         
 
     def integrate_through_world_model(world_model: torch.nn.Module, dtime : float, 
-                                       pos: torch.Tensor, # shape [batch_size, num_bones, 3] [batch_size, num_t_bones, 3]
-                                    rots: torch.Tensor, # shape [batch_size, num_bones, 4]  batch_size, num_t_bones, 4]
-                                    vels: torch.Tensor,  # shape [batch_size, num_bones, 3] batch_size, num_t_bones, 3]
-                                    rvels: torch.Tensor, # shape [batch_size, num_bones, 3] batch_size, num_t_bones, 3]
-                                    # heights: torch.Tensor, # shape [batch_size, num_bones] batch_size, num_t_bones, 3]
+                                       pos: torch.Tensor, # shape [batch_size, num_t_bones, 3]
+                                    rots: torch.Tensor, # shape [batch_size, num_t_bones, 4]
+                                    vels: torch.Tensor,  # shape [batch_size, num_t_bones, 3]
+                                    rvels: torch.Tensor, # shape [batch_size,  num_t_bones, 3]
+                                    # heights: torch.Tensor, # shape [batch_size, num_t_bones, 3]
                                     # up_dir: torch.Tensor,  # shape [batch_size, 3]
                                     kin_rot_t: torch.Tensor, # shape [batch_size, num_t_bones, 6] num_t_bones = 16 
                                     kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
@@ -455,7 +455,11 @@ class SupertrackUtils:
         # If you want to find a quaternion diff such that diff * q1 == q2, then you need to use the multiplicative inverse:
         # diff * q1 = q2  --->  diff = q2 * inverse(q1)
         # https://stackoverflow.com/questions/21513637/dot-product-of-two-quaternion-rotations
-        quat_diffs = pyt.quaternion_multiply(SupertrackUtils.normalize_quat(rot2) , pyt.quaternion_invert(SupertrackUtils.normalize_quat(rot1) ))
+        # From paper: "⊖ represents quaternion difference - i.e. taking the log of the
+        # result of the left-hand-side quaternion multiplied by the inverse of
+        # the right-hand-side quaternion" - their left hand side was ground truth
+        quat_diffs = pyt.quaternion_multiply(SupertrackUtils.normalize_quat(rot1) , pyt.quaternion_invert(SupertrackUtils.normalize_quat(rot2)))
+        # quat_diffs = pyt.quaternion_multiply(SupertrackUtils.normalize_quat(rot2) , pyt.quaternion_invert(SupertrackUtils.normalize_quat(rot1) ))
         # vec_part = quat_diffs[..., 1:] # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
         norms = torch.norm(quat_diffs[..., 1:], p=2, dim=-1, keepdim=True) # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
         # scalar_part = quat_diffs[...,:1] # The real/scalar part of a quaternion equals cos(angle/2) where angle is the angle of the quat
@@ -515,7 +519,7 @@ class SupertrackUtils:
                                             ):
         policy_action = policy_action.reshape(NUM_T_BONES, 3) 
         offset_as_quat = pyt.axis_angle_to_quaternion(policy_action)
-        kin_targets = pyt.quaternion_multiply(pd_targets, offset_as_quat)
+        kin_targets = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(offset_as_quat, pd_targets))
         return kin_targets
     
 
