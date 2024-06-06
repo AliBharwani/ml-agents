@@ -38,6 +38,7 @@ class SuperTrackSettings(OffPolicyHyperparamSettings):
     max_loss_weight: float = 10.0
     gradient_clipping : float = -1
     policy_includes_global_data : bool = False
+    wm_output_not_multiplied_by_dtime : bool = False 
 
 def hn(x):
     if isinstance(x, list):
@@ -122,6 +123,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.wm_loss_weights = DynamicLoss(self.hyperparameters.min_loss_weight, self.hyperparameters.max_loss_weight, num_iterations=self.hyperparameters.loss_weights_init_steps)
         self.policy_loss_weights = DynamicLoss(self.hyperparameters.min_loss_weight, self.hyperparameters.max_loss_weight, num_iterations=self.hyperparameters.loss_weights_init_steps)
         self.policy_includes_global_data = self.hyperparameters.policy_includes_global_data
+        self.wm_output_not_multiplied_by_dtime = self.hyperparameters.wm_output_not_multiplied_by_dtime
                 
     def _init_world_model(self):
         """
@@ -174,7 +176,11 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
 
         for i in range(raw_window_size):
             # Take one step through world
-            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *[t[:, i, ...] for t in world_model_tensors], update_normalizer=i==0) # Only update normalizer if using ground truth values
+            next_predicted_values = SupertrackUtils.integrate_through_world_model(self._world_model,
+                                                                                self.dtime,
+                                                                                *[t[:, i, ...] for t in world_model_tensors],
+                                                                                update_normalizer=i==0,
+                                                                                skip_dtime_scale=self.wm_output_not_multiplied_by_dtime) # Only update normalizer if using ground truth values
             predicted_pos[:, i+1, ...], predicted_rots[:, i+1, ...], predicted_vels[:, i+1, ...], predicted_rot_vels[:, i+1, ...] = next_predicted_values
 
 
@@ -261,7 +267,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
                                                                 pre_target_vels[:, window_step_i, ...],
                                                                 local_tensors = local_sim_window_step_i,
-                                                                update_normalizer=False)
+                                                                update_normalizer=False,
+                                                                skip_dtime_scale=self.wm_output_not_multiplied_by_dtime)
             sim_state_window_step_i =  next_sim_state # Set for next iteration of loop
 
             if self.policy_includes_global_data:

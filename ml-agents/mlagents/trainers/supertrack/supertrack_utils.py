@@ -397,6 +397,7 @@ class SupertrackUtils:
                                     kin_rvel_t: torch.Tensor, # shape [batch_size, num_t_bones, 3]
                                     local_tensors : Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] = None,
                                     update_normalizer: bool = False,
+                                    skip_dtime_scale: bool = False,
                                     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Integrate a character state through the world model
@@ -420,15 +421,15 @@ class SupertrackUtils:
         # Convert to world space
         accel = pyt.quaternion_apply(root_rot, local_accel) 
         rot_accel = pyt.quaternion_apply(root_rot, local_rot_accel)
-
+        # print(f"Local_accel: {local_accel} \n Local rot accel: {local_rot_accel}")
         # padding_for_root_bone = torch.zeros((batch_size, 1, 3))
         # accel = torch.cat((padding_for_root_bone, accel), dim=1)
         # rot_accel = torch.cat((padding_for_root_bone, rot_accel), dim=1)
         # Integrate using Semi-Implicit Euler
         # We use semi-implicit so the model can influence position and velocity losses for the first timestep
         # Also that's what the paper does
-        vels = vels + accel*dtime
-        rvels = rvels + rot_accel*dtime 
+        vels = vels + accel* (1 if skip_dtime_scale else dtime)
+        rvels = rvels + rot_accel* (1 if skip_dtime_scale else dtime)
         pos = pos + vels*dtime
         # Don't need to standardize because pyt.quaternion_multiply does by default 
         rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*dtime) , rots.clone())

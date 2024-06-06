@@ -43,8 +43,10 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
         clip_action: bool = True,
         policy_includes_global_data: bool = False,
         st_debug: bool = False,
+        trainer_settings = None,
     ):
         _action_spec = ActionSpec(continuous_size=48, discrete_branches=())
+        self.wm_output_not_multiplied_by_dtime = trainer_settings.hyperparameters.wm_output_not_multiplied_by_dtime
         super().__init__(observation_specs, network_settings, _action_spec, conditional_sigma=conditional_sigma, tanh_squash=tanh_squash,
                          device=device,clip_action=clip_action,policy_includes_global_data=policy_includes_global_data, st_debug=st_debug)
 
@@ -159,11 +161,13 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
             # pdb.set_trace()
             next_sim_state = SupertrackUtils.integrate_through_world_model(self.world_model, self.dtime, *sim_state,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
-                                                                cur_pd_rvels)
+                                                                cur_pd_rvels,
+                                                                skip_dtime_scale=self.wm_output_not_multiplied_by_dtime)
             next_spos, next_srots, next_svels, next_srvels = next_sim_state
-            # Copy over ground truth spos / srots since world model does not predict world location
-            # next_spos[:, 0] = k_pos[i, 0]
-            # next_srots[:, 0] = k_rot[i, 0]
+            if i == 0:
+                print(f"next_spos: {next_spos}")
+                print(f"next_srots: {next_srots}")
+                pdb.set_trace()
 
             predicted_bone_poses[i, ...] = next_spos.detach().clone()
             predicted_bone_rots[i, ...] = next_srots.detach().clone()

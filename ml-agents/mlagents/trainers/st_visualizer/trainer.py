@@ -177,7 +177,7 @@ class STVisualizerTrainer(Trainer):
         actor_cls = STVisualizationActor
         actor_kwargs = {"conditional_sigma": False, "tanh_squash": False, "clip_action": self.trainer_settings.clip_action, 
                            "policy_includes_global_data": self.trainer_settings.hyperparameters.policy_includes_global_data,
-                           "st_debug": torch_settings.st_debug}
+                           "st_debug": torch_settings.st_debug, "trainer_settings": self.trainer_settings}
 
         policy = TorchPolicy(
             self.seed,
