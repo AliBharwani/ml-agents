@@ -83,6 +83,7 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
             raise Exception("More than one agent not compatible with visualizer")
         # pdb.set_trace()
         parsed_wm_data = self.parse_world_model_data(world_model_data)
+
         predicted_bone_pos, predicted_bone_rots = self.get_predictions_from_wm(supertrack_data, parsed_wm_data, action.continuous_tensor)
         # flatten
         final_flat_tensor = torch.cat((predicted_bone_pos, predicted_bone_rots), dim=2).reshape(-1)
@@ -159,15 +160,19 @@ class STVisualizationActor(SuperTrackPolicyNetwork):
         for i in range(nframes):
             # Predict next state with world model
             # pdb.set_trace()
+            # pos, rots, vels, rvels = sim_state
+            # if i == 0:
+            #     print(f"rots being passed to integrate: {rots}")
             next_sim_state = SupertrackUtils.integrate_through_world_model(self.world_model, self.dtime, *sim_state,
                                                                 pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
                                                                 cur_pd_rvels,
-                                                                skip_dtime_scale=self.wm_output_not_multiplied_by_dtime)
+                                                                skip_dtime_scale=self.wm_output_not_multiplied_by_dtime,
+                                                                debug=i==0)
             next_spos, next_srots, next_svels, next_srvels = next_sim_state
-            if i == 0:
-                print(f"next_spos: {next_spos}")
-                print(f"next_srots: {next_srots}")
-                pdb.set_trace()
+            # if i == 0:
+            #     print(f"next_spos: {next_spos}")
+            #     print(f"next_srots: {next_srots}")
+            #     pdb.set_trace()
 
             predicted_bone_poses[i, ...] = next_spos.detach().clone()
             predicted_bone_rots[i, ...] = next_srots.detach().clone()

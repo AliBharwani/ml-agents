@@ -354,7 +354,7 @@ class SupertrackUtils:
         # root_pos = cur_pos[..., 0:1 , :].detach().clone() # shape [..., 1, 3]
         # inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :].detach().clone()) # shape [..., 1, 4]
         root_pos = cur_pos[..., 0:1 , :].clone() # shape [..., 1, 3]
-        inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :].clone()) # shape [..., 1, 4]
+        inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :]) # shape [..., 1, 4]
         inv_root_rots = SupertrackUtils.normalize_quat(inv_root_rots)
         local_pos = pyt.quaternion_apply(inv_root_rots, cur_pos - root_pos) # shape [..., num_t_bones, 3]
         B = cur_pos.shape[:-2]
@@ -366,10 +366,12 @@ class SupertrackUtils:
         # RuntimeError: Output 0 of UnbindBackward0 is a view and its base or another view of its base has been modified inplace. 
         # This view is the output of a function that returns multiple views. Such functions do not allow the output views to be
         # modified inplace. You should replace the inplace operation by an out-of-place one
-        cur_rots[..., 1:, :] = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [..., num_t_bones, 4]
-        local_rots_quat = cur_rots
+        local_rots_quat = torch.empty_like(cur_rots)
+        local_rots_quat[...,  0, :] = cur_rots[..., 0, :].clone()
+        local_rots_quat[..., 1:, :] = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [..., num_t_bones, 4]
+        # local_rots_quat = cur_rots
 
-        local_rots_6d = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots_quat.clone())) # shape [..., 6]
+        local_rots_6d = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots_quat)) # shape [..., 6]
 
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels) # shape [..., num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels) # shape [..., num_t_bones, 3]
@@ -398,6 +400,7 @@ class SupertrackUtils:
                                     local_tensors : Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] = None,
                                     update_normalizer: bool = False,
                                     skip_dtime_scale: bool = False,
+                                    debug: bool = False,
                                     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Integrate a character state through the world model
@@ -428,12 +431,12 @@ class SupertrackUtils:
         # Integrate using Semi-Implicit Euler
         # We use semi-implicit so the model can influence position and velocity losses for the first timestep
         # Also that's what the paper does
-        vels = vels + accel* (1 if skip_dtime_scale else dtime)
-        rvels = rvels + rot_accel* (1 if skip_dtime_scale else dtime)
-        pos = pos + vels*dtime
+        next_vels = vels  + accel* (1 if skip_dtime_scale else dtime)
+        next_rvels = rvels  + rot_accel* (1 if skip_dtime_scale else dtime)
+        next_pos = pos + next_vels*dtime
         # Don't need to standardize because pyt.quaternion_multiply does by default 
-        rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(rvels*dtime) , rots.clone())
-        return pos, rots, vels, rvels
+        next_rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(next_rvels*dtime) , rots.clone())
+        return next_pos, next_rots, next_vels, next_rvels
     
 
     def char_state_loss(pos1, pos2, rot1, rot2, vel1, vel2, rvel1, rvel2, unbatched : bool = False):
