@@ -286,6 +286,9 @@ class STBuffer(MutableMapping):
             for key, value in next_keylist.items():
                 if key_is_pdtargets(key):
                     self[key][self.effective_idx] = value
+                    # if key[1] == PDTargetSuffix.ROT:
+                    #     if torch.allclose(value,  torch.tensor(0.0)):
+                    #         pdb.set_trace()
             # Add everything else from cur_keylist
             for key, value in cur_keylist.items():
                 if not key_is_pdtargets(key):

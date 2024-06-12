@@ -232,7 +232,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         predicted_spos, predicted_srots, predicted_svels, predicted_srvels = [s.detach().clone() for s in ground_truth_sim_data]
         predicted_global_sim_state =  [predicted_spos, predicted_srots, predicted_svels, predicted_srvels]
 
-        predicted_local_spos, predicted_local_srots, predicted_local_svels, predicted_local_srvels = [torch.empty(batch_size, raw_window_size, NUM_T_BONES, s.shape[-1]) for s in ground_truth_sim_data]
+        if not self.policy_includes_global_data:
+            predicted_local_spos, predicted_local_srots, predicted_local_svels, predicted_local_srvels = [torch.empty(batch_size, raw_window_size, NUM_T_BONES, s.shape[-1]) for s in ground_truth_sim_data]
 
         local_kin_with_quat = SupertrackUtils.local(k_pos, k_rots, k_vels, k_rvels, include_quat_rots=True)
         local_kin = local_kin_with_quat[:-1]
@@ -323,6 +324,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         lreg /= 10
         lsreg /= 10
         loss = pos_loss + rot_loss + vel_loss + rvel_loss + lreg + lsreg
+        # loss = pos_loss + rot_loss + lreg + lsreg
 
         update_stats = {"Policy/Loss": loss.item(),
                         "Policy/pos_loss": pos_loss.item(),

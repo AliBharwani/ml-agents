@@ -345,7 +345,6 @@ class SupertrackUtils:
             ): 
         """
         Take in character state in world space and convert to local space
-        Removes root bone information as well
 
         Returns:
             tensors of shape [..., NUM_T_BONES * (3 or 4 or 6)] by default
@@ -369,7 +368,6 @@ class SupertrackUtils:
         local_rots_quat = torch.empty_like(cur_rots)
         local_rots_quat[...,  0, :] = cur_rots[..., 0, :].clone()
         local_rots_quat[..., 1:, :] = pyt.quaternion_multiply(inv_root_rots, cur_rots[..., 1:, :].clone()) # shape [..., num_t_bones, 4]
-        # local_rots_quat = cur_rots
 
         local_rots_6d = pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(local_rots_quat)) # shape [..., 6]
 
@@ -481,8 +479,6 @@ class SupertrackUtils:
                 padding = '\t\t' if idx < 4 else ' \t'
                 bone_loss = torch.abs(rvel1[idx] - rvel2[idx]).sum()
                 print(f"{bone[5:]}{padding} kin: {pp(rvel1[idx])} {torch.norm(rvel1[idx]).item():.4f} \t sim: {pp(rvel2[idx])} {torch.norm(rvel2[idx]).item():.4f} loss: {bone_loss.item():.4f}")
-
-
             # pdb.set_trace()
             # print(quat_logs)
             # print(f"LeftForearm rot loss: {quat_logs[-2].abs().sum()}")
