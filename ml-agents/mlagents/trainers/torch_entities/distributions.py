@@ -181,9 +181,12 @@ class GaussianDistribution(nn.Module):
                 bias_init=Initialization.Zero,
             )
         else:
+            # self.log_sigma = nn.Parameter(
+            #     torch.zeros(1, num_outputs, requires_grad=True)
+            # )
             self.log_sigma = nn.Parameter(
-                torch.zeros(1, num_outputs, requires_grad=True)
-            )
+                torch.zeros(1, num_outputs), requires_grad=False)
+            # self.log_sigma = torch.zeros(1, num_outputs)
 
     def forward(self, inputs: torch.Tensor) -> List[DistInstance]:
         mu = self.mu(inputs)
