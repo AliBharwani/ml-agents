@@ -269,7 +269,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                 input = [*local_kin_at_kin_idx , *local_sim_window_step_i]
                 global_drift = None
                 if self.policy_includes_global_data:
-                    global_drift = torch.empty(batch_size, 3)
+                    # global_drift = torch.empty(batch_size, 3)
                     sim_hip_world_pos = sim_state_window_step_i[0][:, 0, :]
                     kin_hip_world_pos = k_pos[:, window_step_i, 0, :]
                     global_drift = kin_hip_world_pos - sim_hip_world_pos
@@ -278,8 +278,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                 output = action.reshape(batch_size, NUM_T_BONES, 3)
                 output =  pyt.axis_angle_to_quaternion(output)
                 # Compute PD targets
-                # cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...])
-                cur_kin_targets = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...]))
+                cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...])
+                # cur_kin_targets = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...]))
                 # Pass through world model
                 next_sim_state = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *sim_state_window_step_i,
                                                                     pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
@@ -380,9 +380,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         return modules
     
 
-# POLICY_NORMALIZATION_SIZE = what do we want to normalize? local_pos, local_vels for sim and kin
-# = (NUM_T_BONES * (3+3))*2 ; for NUM_T_BONES = 16 => (16*6)*2 = 96 * 2 = 192
-POLICY_NORMALIZATION_SIZE = 192
+# POLICY_NORMALIZATION_SIZE = what do we want to normalize? local_pos, local_vels, heights for sim and kin
+# = (NUM_T_BONES * (3+3+1))*2 ; for NUM_T_BONES = 16 => (16*7)*2 = 112 * 2 = 224
+POLICY_NORMALIZATION_SIZE = 224
 class PolicyNetworkBody(nn.Module):
     def __init__(
             self,
@@ -420,16 +420,18 @@ class PolicyNetworkBody(nn.Module):
             k_local_rots_6d: torch.Tensor,    # [batch_size, NUM_T_BONES * 6] 
             k_local_vels: torch.Tensor,       # [batch_size, NUM_T_BONES * 3]
             k_local_rot_vels: torch.Tensor,   # [batch_size, NUM_T_BONES * 3]
+            k_heights: torch.Tensor,          # [batch_size, NUM_T_BONES]
             k_local_up_dir: torch.Tensor,     # [batch_size, 3]
             s_local_pos : torch.Tensor,       # [batch_size, NUM_T_BONES * 3]
             s_local_rots_6d: torch.Tensor,    # [batch_size, NUM_T_BONES * 6] 
             s_local_vels: torch.Tensor,       # [batch_size, NUM_T_BONES * 3]
             s_local_rot_vels: torch.Tensor,   # [batch_size, NUM_T_BONES * 3]
+            s_heights: torch.Tensor,          # [batch_size, NUM_T_BONES]
             s_local_up_dir: torch.Tensor,     # [batch_size, 3]
             update_normalizer: bool = False,
             global_drift: torch.Tensor = None, # [batch_size, 3]
     ) -> torch.Tensor:
-        normalizable_inputs = torch.cat((k_local_pos, k_local_vels, s_local_pos, s_local_vels), dim=-1)
+        normalizable_inputs = torch.cat((k_local_pos, k_local_vels, k_heights, s_local_pos, s_local_vels, s_heights), dim=-1)
         if self.network_settings.normalize:
             if update_normalizer:
                 self.normalizer.update(normalizable_inputs)
@@ -522,8 +524,10 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         SIZE_ROTS_6D = NUM_T_BONES * 6
         SIZE_VELS = NUM_T_BONES * 3
         SIZE_ROT_VELS = NUM_T_BONES * 3
+        SIZE_HEIGHTS = NUM_T_BONES
         SIZE_UP_DIR = 3
         idx = 0
+        
         k_local_pos = dummy_obs[:, idx:idx + SIZE_POS]
         idx += SIZE_POS
         k_local_rots_6d = dummy_obs[:, idx:idx + SIZE_ROTS_6D]
@@ -532,8 +536,11 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         idx += SIZE_VELS
         k_local_rot_vels = dummy_obs[:, idx:idx + SIZE_ROT_VELS]
         idx += SIZE_ROT_VELS
+        k_heights  = dummy_obs[:, idx:idx + SIZE_HEIGHTS]
+        idx += SIZE_HEIGHTS
         k_local_up_dir = dummy_obs[:, idx:idx + SIZE_UP_DIR]
         idx += SIZE_UP_DIR
+
         s_local_pos = dummy_obs[:, idx:idx + SIZE_POS]
         idx += SIZE_POS
         s_local_rots_6d = dummy_obs[:, idx:idx + SIZE_ROTS_6D]
@@ -542,6 +549,8 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
         idx += SIZE_VELS
         s_local_rot_vels = dummy_obs[:, idx:idx + SIZE_ROT_VELS]
         idx += SIZE_ROT_VELS
+        s_heights  = dummy_obs[:, idx:idx + SIZE_HEIGHTS]
+        idx += SIZE_HEIGHTS
         s_local_up_dir = dummy_obs[:, idx:idx + SIZE_UP_DIR]
         idx += SIZE_UP_DIR
         global_drift = None
@@ -554,11 +563,13 @@ class SuperTrackPolicyNetwork(nn.Module, Actor):
             k_local_rots_6d,
             k_local_vels,
             k_local_rot_vels,
+            k_heights,
             k_local_up_dir,
             s_local_pos,
             s_local_rots_6d,
             s_local_vels,
             s_local_rot_vels,
+            s_heights,
             s_local_up_dir,
             global_drift=global_drift,
         )

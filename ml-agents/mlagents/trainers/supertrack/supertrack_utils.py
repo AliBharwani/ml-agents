@@ -166,7 +166,8 @@ class SupertrackUtils:
         sim_inputs = [torch.stack(t)[:, 1:, :] for t in zip(*sim_inputs)]
         # SupertrackUtils.local expects tensors in the shape [batch_size, num_bones, 3] for pos, [batch_size, num_bones, 4] for rots, etc
         local_sim = SupertrackUtils.local(*sim_inputs) # Shape is now [batch_size, local sim input size]
-
+        # local_sim_w_quat = SupertrackUtils.local(*sim_inputs, include_quat_rots=True) # Shape is now [batch_size, local sim input size]
+        # local_sim = local_sim_w_quat[:-1]
         kin_inputs = [st_datum.kin_char_state.values() for st_datum in st_data]
         kin_inputs = [torch.stack(t)[:, 1:, :] for t in zip(*kin_inputs)]
         local_kin = SupertrackUtils.local(*kin_inputs)
@@ -176,7 +177,11 @@ class SupertrackUtils:
             kin_world_hip_pos = kin_inputs[0][:, 0, :]
             global_drift = kin_world_hip_pos - sim_world_hip_pos
             # print(f"Sim world pos - {sim_world_hip_pos} Kin world pos - {kin_world_hip_pos} global_drift: {global_drift}")
-            # pdb.set_trace()
+        # pdb.set_trace()
+        # print(local_sim[0][0])
+        # print(local_sim_w_quat[0][-1])
+        # print(local_sim[0][2])
+        # print(local_sim[0][3])
         return [*local_kin, *local_sim], global_drift 
     
     @staticmethod
@@ -346,12 +351,13 @@ class SupertrackUtils:
         """
         Take in character state in world space and convert to local space
 
-        Returns:
-            tensors of shape [..., NUM_T_BONES * (3 or 4 or 6)] by default
-                             if unzip_to_batchsize is false: [..., NUM_T_BONES, 3 or 4 or 6] 
+        :return:
+            tensors of shape [..., NUM_T_BONES * (1 or 3 or 4 or 6)] by default
+                             if unzip_to_batchsize is false: [..., NUM_T_BONES, 3 or 4 or 6]  OR [..., NUM_T_BONES] OR [..., 3] 
         """
         # root_pos = cur_pos[..., 0:1 , :].detach().clone() # shape [..., 1, 3]
         # inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :].detach().clone()) # shape [..., 1, 4]
+        heights = cur_pos[..., 1].clone() # Clone the y coord of position before we convert to local space 
         root_pos = cur_pos[..., 0:1 , :].clone() # shape [..., 1, 3]
         inv_root_rots = pyt.quaternion_invert(cur_rots[..., 0:1, :]) # shape [..., 1, 4]
         inv_root_rots = SupertrackUtils.normalize_quat(inv_root_rots)
@@ -374,7 +380,7 @@ class SupertrackUtils:
         local_vels = pyt.quaternion_apply(inv_root_rots, cur_vels) # shape [..., num_t_bones, 3]
         local_rot_vels = pyt.quaternion_apply(inv_root_rots, cur_rot_vels) # shape [..., num_t_bones, 3]
 
-        return_tensors = [local_pos, local_rots_6d, local_vels, local_rot_vels, local_up_dir]
+        return_tensors = [local_pos, local_rots_6d, local_vels, local_rot_vels, heights, local_up_dir]
         if include_quat_rots:
             return_tensors.append(local_rots_quat)
         # return_tensors = [(local_pos, 'local_pos'), (return_rots, 'return_rots'), (local_vels, 'local_vels'), (local_rot_vels, 'local_rot_vels'), (cur_heights[:, 1:], 'cur_heights'), (cur_up_dir, 'cur_up_dir')]
