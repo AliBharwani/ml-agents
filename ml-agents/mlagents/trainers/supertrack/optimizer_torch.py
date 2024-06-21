@@ -448,7 +448,7 @@ class PolicyNetworkBody(nn.Module):
         inputs = torch.cat(input_tensors, dim=-1)
         return self.layers(inputs)
 
-class SuperTrackPolFicyNetwork(nn.Module, Actor):
+class SuperTrackPolicyNetwork(nn.Module, Actor):
     MODEL_EXPORT_VERSION = 3
     def __init__(
         self,
