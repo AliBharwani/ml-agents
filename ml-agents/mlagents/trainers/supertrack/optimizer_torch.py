@@ -279,7 +279,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                 output =  pyt.axis_angle_to_quaternion(output)
                 # Compute PD targets
                 # cur_kin_targets = pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...])
-                cur_kin_targets = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...]))
+                # cur_kin_targets = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(output, pre_target_rots[:, window_step_i, ...]))
+                cur_kin_targets = SupertrackUtils.normalize_quat(pyt.quaternion_multiply(pre_target_rots[:, window_step_i, ...], output))
                 # Pass through world model
                 next_sim_state = SupertrackUtils.integrate_through_world_model(self._world_model, self.dtime, *sim_state_window_step_i,
                                                                     pyt.matrix_to_rotation_6d(pyt.quaternion_to_matrix(cur_kin_targets)),
