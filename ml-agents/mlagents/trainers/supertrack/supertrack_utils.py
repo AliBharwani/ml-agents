@@ -529,6 +529,14 @@ class SupertrackUtils:
         return kin_targets
     
 
+    def decayed_lr(start_lr: float, target_lr: float, max_step: int, current_step: int) -> float:
+        current_step = min(current_step, max_step)
+        # Return start_lr when current_step is 0 and target_lr when current_step == max_step AKA basic lerp
+        alpha = float(current_step) / max_step
+        decayed_val = start_lr * (1 - alpha) + target_lr * (alpha)
+        return decayed_val
+    
+
 BONENAMES = [
     "Bone_Hips", "Bone_Spine", "Bone_Spine1", "Bone_Spine2",
     "Bone_LeftUpLeg", "Bone_RightUpLeg", "Bone_LeftLeg", "Bone_RightLeg",

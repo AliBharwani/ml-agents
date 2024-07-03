@@ -8,6 +8,7 @@ import pdb
 from mlagents.torch_utils import torch, nn, default_device
 from mlagents.trainers.supertrack import world_model
 from mlagents.trainers.torch_entities.encoders import Normalizer
+from mlagents.trainers.torch_entities.utils import ModelUtils
 import numpy as np
 import pytorch3d.transforms as pyt
 from mlagents.trainers.supertrack.supertrack_utils import  NUM_BONES, NUM_T_BONES, POLICY_INPUT_LEN, POLICY_OUTPUT_LEN, STSingleBufferKey, SupertrackUtils, nsys_profiler
@@ -27,20 +28,27 @@ from mlagents.trainers.settings import (
 from mlagents.trainers.torch_entities.agent_action import AgentAction
 
 @attr.s(auto_attribs=True)
-class SuperTrackSettings(OffPolicyHyperparamSettings):
+class SuperTrackSettings:
+    # BUFFER SETTINGS
     batch_size: int = 128
     buffer_size: int = 50000
     buffer_init_steps: int = 0
-    num_epoch: int = 3
     steps_per_update: float = 1
+    max_update_iterations: int = -1
     save_replay_buffer: bool = False
+    # LOSS WEIGHTS 
     loss_weights_init_steps : int = 100
     min_loss_weight: float = 0.5
     max_loss_weight: float = 10.0
-    gradient_clipping : float = -1
+    # TRAINING OPTIONS
     policy_includes_global_data : bool = False
     wm_output_not_multiplied_by_dtime : bool = False
     mixed_precision_training: bool = False
+    # OPTIMIZER UPDATES
+    gradient_clipping : float = -1
+    wm_decay_lr_target: float = -1
+    policy_decay_lr_target: float = -1
+    decay_lr_steps: int = 0
 
 def hn(x):
     if isinstance(x, list):
@@ -114,6 +122,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.hyperparameters: SuperTrackSettings = cast(
             SuperTrackSettings, trainer_settings.hyperparameters
         )
+        self.start_wm_lr = trainer_settings.world_model_network_settings.learning_rate
+        self.start_policy_lr = trainer_settings.policy_network_settings.learning_rate
         self.wm_lr = trainer_settings.world_model_network_settings.learning_rate
         self.policy_lr = trainer_settings.policy_network_settings.learning_rate
         self.first_wm_update = True
@@ -154,7 +164,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         self.policy_optimizer = torch.optim.Adam(self.actor_gpu.parameters(), lr=self.policy_lr)
         self.policy_optimizer.load_state_dict(policy_optimizer_state)
     
-    def update_world_model(self, batch, raw_window_size: int) -> Dict[str, float]:
+    def update_world_model(self, batch, raw_window_size: int, current_update_step: int) -> Dict[str, float]:
         self._world_model.train()
         # suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL, CharTypeSuffix.HEIGHT, CharTypeSuffix.UP_DIR]
         suffixes = [CharTypeSuffix.POSITION, CharTypeSuffix.ROTATION, CharTypeSuffix.VEL, CharTypeSuffix.RVEL]
@@ -205,6 +215,12 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             
             pos_loss, rot_loss, vel_loss, rvel_loss = self.wm_loss_weights.get_reweighted_losses(raw_pos_l, raw_rot_l, raw_vel_l, raw_rvel_l)
             loss = pos_loss + rot_loss + vel_loss + rvel_loss
+
+
+        if self.hyperparameters.wm_decay_lr_target > 0:
+            self.wm_lr = SupertrackUtils.decayed_lr(self.start_wm_lr, self.hyperparameters.wm_decay_lr_target, self.hyperparameters.decay_lr_steps, current_update_step)      
+            ModelUtils.update_learning_rate(self.world_model_optimzer, self.wm_lr)
+            
         update_stats = {'World Model/wpos_loss': pos_loss.item(),
                          'World Model/wrot_loss': rot_loss.item(),
                          'World Model/wvel_loss': vel_loss.item(),
@@ -212,8 +228,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
                          'World Model/total loss': loss.item(),
                          'World Model/learning_rate': self.wm_lr}
 
+        self.world_model_optimzer.zero_grad(set_to_none=True)
         if self.hyperparameters.mixed_precision_training:
-            self.world_model_optimzer.zero_grad(set_to_none=True)
             self.wm_scaler.scale(loss).backward()
             if self.hyperparameters.gradient_clipping > 0:
                 self.wm_scaler.unscale_(self.world_model_optimzer)
@@ -221,7 +237,6 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             self.wm_scaler.step(self.world_model_optimzer)
             self.wm_scaler.update()
         else:
-            self.world_model_optimzer.zero_grad(set_to_none=True)
             loss.backward()
             if self.hyperparameters.gradient_clipping > 0:
                 torch.nn.utils.clip_grad_norm_(self._world_model.parameters(), self.hyperparameters.gradient_clipping)
@@ -230,7 +245,7 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
         return update_stats
     
 
-    def update_policy(self, batch: STBuffer, batch_size: int, raw_window_size: int, nsys_profiler_running: bool = False) -> Dict[str, float]:
+    def update_policy(self, batch: STBuffer, batch_size: int, raw_window_size: int, current_update_step: int, nsys_profiler_running: bool = False) -> Dict[str, float]:
         cur_actor = self.policy.actor
         if self.split_actor_devices:
             cur_actor = self.actor_gpu
@@ -343,6 +358,10 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             lsreg /= 10
             loss = pos_loss + rot_loss + vel_loss + rvel_loss + lreg + lsreg
             # loss = pos_loss + rot_loss + lreg + lsreg
+
+        if self.hyperparameters.policy_decay_lr_target > 0:
+            self.policy_lr = SupertrackUtils.decayed_lr(self.start_policy_lr, self.hyperparameters.policy_decay_lr_target, self.hyperparameters.decay_lr_steps, current_update_step)      
+            ModelUtils.update_learning_rate(self.policy_optimizer, self.policy_lr)
 
         update_stats = {"Policy/Loss": loss.item(),
                         "Policy/pos_loss": pos_loss.item(),

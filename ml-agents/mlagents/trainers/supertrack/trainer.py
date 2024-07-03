@@ -256,10 +256,10 @@ class SuperTrackTrainer(RLTrainer):
                     policy_minibatch = self.update_buffer.sample_mini_batch(self.policy_batch_size, self.policy_window, key_list=self.policy_keylist)
 
                 with nsys_profiler("update_world_model", nsys_profiler_running):
-                    update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_window)
+                    update_stats = self.optimizer.update_world_model(world_model_minibatch, self.wm_window, self.update_steps)
 
                 with nsys_profiler("update_policy", nsys_profiler_running):
-                    update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window, nsys_profiler_running=nsys_profiler_running))
+                    update_stats.update(self.optimizer.update_policy(policy_minibatch, self.policy_batch_size, self.policy_window, self.update_steps, nsys_profiler_running=nsys_profiler_running))
 
                 for stat_name, value in update_stats.items():
                     batch_update_stats[stat_name].append(value)
