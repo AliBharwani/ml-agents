@@ -19,7 +19,7 @@ TOTAL_OBS_LEN = 720
 # CHAR_STATE_LEN = 240
 NUM_BONES = 17
 NUM_T_BONES = 16 # Number of bones that have PD Motors (T = targets)
-POLICY_INPUT_LEN = 480
+POLICY_INPUT_LEN = 518
 POLICY_OUTPUT_LEN = 48
 MINIMUM_TRAJ_LEN = 48
 
@@ -60,7 +60,16 @@ def nsys_profiler(name: str, profiler_running: bool):
         yield
     finally:
         if profiler_running: torch.cuda.nvtx.range_pop()
-    
+
+
+def flatten_to_list(array_like):
+    if torch.is_tensor(array_like):
+        return array_like.flatten().tolist()
+    elif isinstance(array_like, np.ndarray):
+        return array_like.flatten().tolist()
+    else:
+        raise TypeError(f"Unsupported type for flattening: {type(array_like)}")
+
 
 @dataclass
 class CharState():
@@ -92,6 +101,24 @@ class CharState():
         for attr in ['positions', 'rotations', 'velocities', 'rot_velocities', 'heights', 'up_dir']:
             current_attr = getattr(self, attr)
             setattr(self, attr, current_attr.to(device, non_blocking=True))
+    
+    def to_flat_list(self):
+        vec_attrs = ['positions', 'velocities', 'rot_velocities', 'heights', 'up_dir']
+        quat_attr = ['rotations']
+        return {attr: flatten_to_list(val) for attr, val in self.__dict__.items()}
+    
+    def to_json(self):
+        # convert to Vector3[] essentially 
+        json_dict = {}
+        for attr in ['positions', 'velocities', 'rot_velocities']:
+            cur_attr = getattr(self, attr).tolist()
+            json_dict[attr] = [{'x': t[0], 'y': t[1], 'z':t[2]} for t in cur_attr]
+        json_dict['heights'] = self.heights.tolist()
+        up_dir = self.up_dir.tolist()
+        json_dict['up_dir'] = {'x': up_dir[0], 'y': up_dir[1], 'z': up_dir[2]}
+        json_dict['rotations'] = [{'w': t[0], 'x': t[1], 'y': t[2], 'z':t[3]} for t in self.rotations.tolist()]
+        return json_dict
+
 
     
 @dataclass
@@ -121,6 +148,16 @@ class PDTargets():
             current_attr = getattr(self, attr)
             setattr(self, attr, current_attr.to(device, non_blocking=True))
 
+    def to_flat_list(self):
+        return {attr: flatten_to_list(val) for attr, val in self.__dict__.items()}
+
+    def to_json(self):
+        # convert to Vector3[] essentially 
+        json_dict = {}
+        json_dict['rot_velocities'] = [{'x': t[0], 'y': t[1], 'z':t[2]} for t in self.rot_velocities.tolist()]
+        json_dict['rotations'] = [{'w': t[0], 'x': t[1], 'y': t[2], 'z':t[3]} for t in self.rotations.tolist()]
+        return json_dict
+    
 
 @dataclass
 class SuperTrackDataField():
@@ -139,6 +176,10 @@ class SuperTrackDataField():
         for attr in ['sim_char_state', 'kin_char_state', 'pre_targets', 'post_targets']:
             current_attr = getattr(self, attr)
             current_attr.to(device)
+
+    def to_json(self):
+        return {attr: val.to_json() for attr, val in self.__dict__.items()}
+
 
 class SupertrackUtils:
 
@@ -177,11 +218,6 @@ class SupertrackUtils:
             kin_world_hip_pos = kin_inputs[0][:, 0, :]
             global_drift = kin_world_hip_pos - sim_world_hip_pos
             # print(f"Sim world pos - {sim_world_hip_pos} Kin world pos - {kin_world_hip_pos} global_drift: {global_drift}")
-        # pdb.set_trace()
-        # print(local_sim[0][0])
-        # print(local_sim_w_quat[0][-1])
-        # print(local_sim[0][2])
-        # print(local_sim[0][3])
         return [*local_kin, *local_sim], global_drift 
     
     @staticmethod
@@ -419,7 +455,7 @@ class SupertrackUtils:
         # even if it affects the next frame's local velocities and such it won't backprop gradients to correct them"
         if local_tensors is None:
             local_tensors = SupertrackUtils.local(pos, rots, vels, rvels)
-            
+
         input = (*local_tensors,
                     kin_rot_t.reshape(batch_size, -1),
                     kin_rvel_t.reshape(batch_size, -1))
@@ -440,6 +476,7 @@ class SupertrackUtils:
         next_pos = pos + next_vels*dtime
         # Don't need to standardize because pyt.quaternion_multiply does by default 
         next_rots = pyt.quaternion_multiply(pyt.axis_angle_to_quaternion(next_rvels*dtime) , rots.clone())
+        next_rots = SupertrackUtils.normalize_quat(next_rots)
         return next_pos, next_rots, next_vels, next_rvels
     
 
@@ -456,8 +493,8 @@ class SupertrackUtils:
         raw_pos_l = l1_norm(pos1, pos2) #torch.mean(torch.sum(torch.abs(pos1-pos2), dim =(1,2,3)))
         raw_vel_l = l1_norm(vel1, vel2) 
         raw_rvel_l = l1_norm(rvel1, rvel2)
-        if rot1.shape[-1] != 4: # rots are in quat form
-            raise Exception(f"Rots in unexpected shape: {rot1.shape}")
+        # if rot1.shape[-1] != 4: # rots are in quat form
+        #     raise Exception(f"Rots in unexpected shape: {rot1.shape}")
 
         # From Stack Overflow:
         # If you want to find a quaternion diff such that diff * q1 == q2, then you need to use the multiplicative inverse:
@@ -467,6 +504,7 @@ class SupertrackUtils:
         # result of the left-hand-side quaternion multiplied by the inverse of
         # the right-hand-side quaternion" - their left hand side was ground truth
         quat_diffs = pyt.quaternion_multiply(SupertrackUtils.normalize_quat(rot1) , pyt.quaternion_invert(SupertrackUtils.normalize_quat(rot2)))
+        quat_diffs = SupertrackUtils.normalize_quat(quat_diffs)
         # quat_diffs = pyt.quaternion_multiply(SupertrackUtils.normalize_quat(rot2) , pyt.quaternion_invert(SupertrackUtils.normalize_quat(rot1) ))
         # vec_part = quat_diffs[..., 1:] # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat
         norms = torch.norm(quat_diffs[..., 1:], p=2, dim=-1, keepdim=True) # The magnitude of the vec part of a quaternion equals sin(angle/2) where angle is the angle of the quat

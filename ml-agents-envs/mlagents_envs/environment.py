@@ -149,7 +149,7 @@ class UnityEnvironment(BaseEnv):
         base_port: Optional[int] = None,
         seed: int = 0,
         no_graphics: bool = False,
-        timeout_wait: int = 60,
+        timeout_wait: int = 120,
         additional_args: Optional[List[str]] = None,
         side_channels: Optional[List[SideChannel]] = None,
         log_folder: Optional[str] = None,

@@ -354,8 +354,8 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             lreg = torch.norm(all_means, p=2 ,dim=-1).sum(dim=-1).mean()
             lsreg = torch.norm(all_means, p=1 ,dim=-1).sum(dim=-1).mean()
             # Weigh regularization losses to contribute 1/100th of the other losses
-            lreg /= 10
-            lsreg /= 10
+            lreg /= 5
+            lsreg /= 5
             loss = pos_loss + rot_loss + vel_loss + rvel_loss + lreg + lsreg
             # loss = pos_loss + rot_loss + lreg + lsreg
 
