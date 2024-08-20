@@ -40,6 +40,7 @@ class SuperTrackSettings:
     loss_weights_init_steps : int = 100
     min_loss_weight: float = 0.5
     max_loss_weight: float = 10.0
+    lower_vel_loss_factor: float = -1
     # TRAINING OPTIONS
     policy_includes_global_data : bool = False
     wm_output_not_multiplied_by_dtime : bool = False
@@ -353,6 +354,9 @@ class TorchSuperTrackOptimizer(TorchOptimizer):
             # Take the norm of the last dimensions, sum across windows, and take mean over batch 
             lreg = torch.norm(all_means, p=2 ,dim=-1).sum(dim=-1).mean()
             lsreg = torch.norm(all_means, p=1 ,dim=-1).sum(dim=-1).mean()
+            if self.hyperparameters.lower_vel_loss_factor > 0:
+                vel_loss *= self.hyperparameters.lower_vel_loss_factor
+                rvel_loss *= self.hyperparameters.lower_vel_loss_factor
             # Weigh regularization losses to contribute 1/100th of the other losses
             lreg /= 5
             lsreg /= 5

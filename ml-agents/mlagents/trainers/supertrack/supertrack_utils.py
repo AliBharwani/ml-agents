@@ -524,6 +524,11 @@ class SupertrackUtils:
                 bone_loss = torch.abs(rvel1[idx] - rvel2[idx]).sum()
                 print(f"{bone[5:]}{padding} kin: {pp(rvel1[idx])} {torch.norm(rvel1[idx]).item():.4f} \t sim: {pp(rvel2[idx])} {torch.norm(rvel2[idx]).item():.4f} loss: {bone_loss.item():.4f}")
             # pdb.set_trace()
+            for idx, bone in enumerate(BONENAMES):
+                padding = '\t\t' if idx < 4 else ' \t'
+                bone_loss = torch.abs(quat_logs[idx]).sum()
+                print(f"{bone[5:]}{padding} loss: {bone_loss.item():.4f}")
+                # print(f"{bone[5:]}{padding} kin: {pp(rvel1[idx])} {torch.norm(rvel1[idx]).item():.4f} \t sim: {pp(rvel2[idx])} {torch.norm(rvel2[idx]).item():.4f} loss: {bone_loss.item():.4f}")
             # print(quat_logs)
             # print(f"LeftForearm rot loss: {quat_logs[-2].abs().sum()}")
             # print(f"RightForearm rot loss: {quat_logs[-1].abs().sum()}")
